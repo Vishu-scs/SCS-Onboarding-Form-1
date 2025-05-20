@@ -23,7 +23,6 @@ const findUserService = async (pool ,email) => {
       const result = await pool.request()
         .input('email', email)
         .query(`SELECT UserID FROM SCS_ONB_User WHERE Email = @email`);
-  
       return result.recordset[0]?.UserID || null;
     } catch (error) {
       throw new Error(`findUserService failed: ${error.message}`);
