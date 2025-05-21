@@ -336,5 +336,14 @@ try {
   throw new Error(`existingLoginData failed : ${error.message}`);
 }
 }
-
-export {existingLoginData,pincodemasterService,pincodeService,createDealerService,createLocationService,designationService,contactDetailsbyLocationService,taxdetailsService,bankdetailsService}
+const fetchContactDetailsService = async(isSame,designationId)=>{
+try {
+    const pool = await getPool1()
+    const query = `select Name , MobileNo , Email from SCS_ONB_ContactDetails where locationid = ${isSame} and DesignationID = ${designationId}`
+    const result = await pool.request().query(query)
+    return result
+} catch (error) {
+  throw new Error(`fetchContactDetailsService failed: ${error.message}`);
+}
+}
+export {fetchContactDetailsService,existingLoginData,pincodemasterService,pincodeService,createDealerService,createLocationService,designationService,contactDetailsbyLocationService,taxdetailsService,bankdetailsService}

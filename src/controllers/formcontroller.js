@@ -1,6 +1,7 @@
-import { createDealerService , createLocationService, designationService, pincodemasterService, pincodeService, taxdetailsService , bankdetailsService, contactDetailsbyLocationService} from "../services/formservice.js";
+import { createDealerService , createLocationService, designationService, pincodemasterService, pincodeService, taxdetailsService , bankdetailsService, contactDetailsbyLocationService, fetchContactDetailsService} from "../services/formservice.js";
 import fs from 'fs'
 import { uploadToS3 } from "../middlewares/multer.middleware.js";
+import { getPool1 } from "../db/db.js";
 
 const citybyPincode = async (req, res) => {
   try {
@@ -148,19 +149,48 @@ try {
 }
 const contactDetails = async(req,res)=>{
 try {
-    const {locationId,designationId,Name,MobileNo,Email,userId} = req.body
-        if (!locationId || !designationId || !Name || !MobileNo || !Email || !userId) {
+    const {locationId,designationId,Name,MobileNo,Email,isSame,userId} = req.body
+        if (!locationId || !designationId ||!userId) {
       return res.status(400).json({
-        message: "All fields (locationId, designationId, Name, MobileNo, Email, userId) are required"
+        message: "All fields (locationId, designationId, userId) are required"
+      });
+    }    
+    if((!Name || !MobileNo || !Email) && (!isSame)){
+      return res.status(400).json({
+        message: `(Name , MobileNo and Email) or (isSame) are required`
       });
     }
-    const data = await contactDetailsbyLocationService(locationId,designationId,Name,MobileNo,Email,userId)
+    let data
+    if(!isSame){
+     data = await contactDetailsbyLocationService(locationId,designationId,Name,MobileNo,Email,userId)
       if (data?.alreadyExists) {
       return res.status(200).json({
         message: data.message,
         Data: []
       });
     }
+  }
+  else{
+      // console.log(isSame);
+      const pool = await getPool1()
+      let SName , SMobileNo , SEmail
+    try {
+            const result = await fetchContactDetailsService(isSame,designationId)
+            SName = result.recordset[0].Name
+            SMobileNo = result.recordset[0].MobileNo
+            SEmail = result.recordset[0].Email
+    } catch (error) {
+      return res.status(500).json({Error:error.message})
+    }
+       data = await contactDetailsbyLocationService(locationId,designationId,SName,SMobileNo,SEmail,userId)
+      if (data?.alreadyExists) {
+      return res.status(200).json({
+        message: data.message,
+        Data: []
+      });
+    }
+
+  }
     res.status(200).json({
       message: "Contact details saved successfully",
       Data : data.recordset
