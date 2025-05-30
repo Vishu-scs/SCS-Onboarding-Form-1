@@ -1,5 +1,6 @@
-import { createDealerService , createLocationService, designationService, pincodemasterService, pincodeService, taxdetailsService , bankdetailsService, contactDetailsbyLocationService, fetchContactDetailsService} from "../services/formservice.js";
+import { createDealerService , createLocationService, designationService, pincodemasterService, pincodeService, taxdetailsService , bankdetailsService, contactDetailsbyLocationService, fetchContactDetailsService, IFSCBAnkMappingService, existingUserDataService, jsontoPDF} from "../services/formservice.js";
 import fs from 'fs'
+import path from 'path'
 import { uploadToS3 } from "../middlewares/multer.middleware.js";
 import { getPool1 } from "../db/db.js";
 
@@ -64,7 +65,15 @@ const createDealer = async (req, res) => {
           message: "brandid, dealer, oemcode, and userid are required"
         });
       }
-  
+      const query = `select * from SCS_ONB_Dealer where addedby = ${userid}`
+      const check = await pool.request().query(query)
+      const existedDealer = check.recordset[0].Dealer
+      if(check.recordset.length > 0){
+        return res.status(400).json({
+          message:`${existedDealer} already onboarded using this email`
+        })
+      }
+
       const result = await createDealerService(brandid, dealer, userid, oemcode);
   
       if (result.alreadyExists) {
@@ -310,4 +319,95 @@ try {
   })
 }
 }
-export {citybyPincode,createDealer,createLocation ,designation , contactDetails ,taxDetails , bankDetails , pincode}
+
+const IFSCBAnkMapping = async (req,res)=>{
+try {
+    const data = await IFSCBAnkMappingService()
+    res.status(200).json({
+      Data:data.recordset
+    })
+} catch (error) {
+    res.status(500).json({
+      Error:error.message
+    })
+}
+}
+
+const existingDataforUser = async(req,res)=>{
+try {
+    const pool = await getPool1()
+    const {userid} = req.body
+    const rawData = await existingUserDataService(userid)
+    const grouped = {};
+  
+      rawData.forEach(row => {
+        const locId = row.LocationID;
+  
+        if (!grouped[locId]) {
+          grouped[locId] = {
+            LocationID: row.LocationID,
+            Brandid: row.Brandid,
+            Dealerid: row.Dealerid,
+            Dealer: row.Dealer,
+            OEMCode: row.OEMCode,
+            Location: row.Location,
+            Address: row.Address,
+            Landmark: row.Landmark,
+            PincodeID: row.PincodeID,
+            CityID: row.CityID,
+            StateID: row.StateID,
+            Latitude: row.Latitude,
+            Longitude: row.Longitude,
+            Contacts: [],
+            TaxDetails: {
+              TAN: row.TAN,
+              PAN: row.PAN,
+              GST: row.GST,
+              GSTCertificate: row.GSTCertificate
+            },
+            BankDetails: {
+              AccountHolderName: row.AccountHolderName,
+              AccountNumber: row.AccountNumber,
+              BankName: row.BankName,
+              BranchName: row.BranchName,
+              IFSCCode: row.IFSCCode,
+              CheckImg: row.CheckImg
+            }
+          };
+        }
+  
+        if (row.Name || row.Email) {
+          grouped[locId].Contacts.push({
+            DesignationID: row.DesignationID,
+            Name: row.Name,
+            MobileNo: row.MobileNo,
+            Email: row.Email
+          });
+        }
+      });
+  
+      const finalResult = Object.values(grouped);
+      res.status(200).json({
+        Data: finalResult
+      })
+} catch (error) {
+  res.status(500).json({
+    Error:error.message
+  })
+}
+}
+
+const pdfmailer = async(req,res)=>{
+  try {
+   const pdfPath = await jsontoPDF(46); // Generate PDF and get file path
+    // console.log(`Sending PDF file: ${pdfPath}`);
+    
+    // Send the file to the client
+    return res.send(path.resolve(pdfPath), `UserReport_47.pdf`);
+    
+  } catch (error) {
+    console.error('Error in pdfmailer:', error);
+    return res.status(500).send({ error: error.message });
+  }
+}
+export {pdfmailer,IFSCBAnkMapping,citybyPincode,createDealer,createLocation ,designation ,existingDataforUser, contactDetails ,taxDetails , bankDetails , pincode}

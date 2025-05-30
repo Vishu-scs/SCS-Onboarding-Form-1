@@ -1,7 +1,14 @@
 import { getPool1, getPool2 } from '../db/db.js';
 import { uploadToS3 ,deleteFromS3} from '../middlewares/multer.middleware.js';
+import PdfPrinter from 'pdfmake';
+import path from 'path';
+import fs from 'fs'
+import { fileURLToPath } from 'url';
+import { dirname } from 'path';
 
 
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
 
 const pincodeService = async(pincode)=>{
 try {
@@ -318,7 +325,7 @@ try {
 }
 }
 
-const existingLoginData = async(userid)=>{
+const existingUserDataService = async(userid)=>{
 try {
     const pool = await getPool1();
     const query = `
@@ -326,16 +333,17 @@ try {
     from SCS_ONB_Dealer d 
     join  SCS_ONB_LocationDetails ld on ld.Dealerid = d.Dealerid
     left join SCS_ONB_ContactDetails cd  on cd.LocationID = ld.LocationID
-    left join  SCS_ONB_TaxDetails td  on td.LocationID = ld.LocationID
-    left join  SCS_ONB_BankDetails bd  on bd.LocationID = ld.LocationID
+    left join SCS_ONB_TaxDetails td  on td.LocationID = ld.LocationID
+    left join SCS_ONB_BankDetails bd  on bd.LocationID = ld.LocationID
     where userid = ${userid}
     `
   const result = await pool.request().query(query)
   return result.recordset 
 } catch (error) {
-  throw new Error(`existingLoginData failed : ${error.message}`);
+  throw new Error(`existingUserDataService failed : ${error.message}`);
 }
 }
+
 const fetchContactDetailsService = async(isSame,designationId)=>{
 try {
     const pool = await getPool1()
@@ -346,4 +354,144 @@ try {
   throw new Error(`fetchContactDetailsService failed: ${error.message}`);
 }
 }
-export {fetchContactDetailsService,existingLoginData,pincodemasterService,pincodeService,createDealerService,createLocationService,designationService,contactDetailsbyLocationService,taxdetailsService,bankdetailsService}
+
+const IFSCBAnkMappingService = async(ifsc)=>{
+try {
+    const pool = await getPool1()
+    const query = `select IFSC , Bank from SCS_ONB_IFSCBAnkMapping where status = 1`
+    const result = await pool.request().query(query)
+    return result
+} catch (error) {
+  throw new Error(`IFSCBAnkMappingService failed: ${error.message}`);
+}
+}
+
+const jsontoPDF = async (userid) => {
+  try {
+    const data = await existingUserDataService(userid);
+
+    // ✅ Deduplicated and filtered arrays
+    const uniqueDealers = Array.from(new Map(data.map(row => [row.Dealerid, row])).values());
+
+    const uniqueLocations = Array.from(new Map(data.map(row => [row.LocationID, row])).values());
+
+    const uniqueContacts = Array.from(
+      new Map(data.map(row => [`${row.LocationID}-${row.DesignationID}`, row])).values()
+    ).filter(row => row.Name || row.Email || row.MobileNo || row.DesignationID);
+
+    const uniqueTax = Array.from(new Map(data.map(row => [row.LocationID, row])).values())
+      .filter(row => row.TAN || row.PAN || row.GST || row.GSTCertificate);
+
+    const uniqueBank = Array.from(new Map(data.map(row => [row.LocationID, row])).values())
+      .filter(row =>
+        row.AccountHolderName ||
+        row.AccountNumber ||
+        row.BankName ||
+        row.BranchName ||
+        row.IFSCCode ||
+        row.CheckImg
+      );
+
+    // ✅ Table Definitions
+    const dealerTable = [
+      [{ text: 'Dealer Info', style: 'subheader', colSpan: 5, alignment: 'center' }, {}, {}, {}, {}],
+      ['DealerID', 'BrandID', 'Dealer', 'OEMCode', 'UserID'],
+      ...uniqueDealers.map(row => [row.Dealerid, row.Brandid, row.Dealer, row.OEMCode, userid])
+    ];
+
+    const locationTable = [
+      [{ text: 'Location Info', style: 'subheader', colSpan: 7, alignment: 'center' }, {}, {}, {}, {}, {}, {}],
+      ['LocationID', 'Location', 'Address', 'Landmark', 'CityID', 'StateID', 'PincodeID'],
+      ...uniqueLocations.map(row => [row.LocationID, row.Location, row.Address, row.Landmark, row.CityID, row.StateID, row.PincodeID])
+    ];
+
+    const contactTable = [
+      [{ text: 'Contact Info', style: 'subheader', colSpan: 4, alignment: 'center' }, {}, {}, {}],
+      ['Name', 'Email', 'MobileNo', 'DesignationID'],
+      ...uniqueContacts.map(row => [row.Name, row.Email, row.MobileNo, row.DesignationID])
+    ];
+
+    const taxTable = [
+      [{ text: 'Tax Info', style: 'subheader', colSpan: 4, alignment: 'center' }, {}, {}, {}],
+      ['TAN', 'PAN', 'GST', 'GST Certificate'],
+      ...uniqueTax.map(row => [row.TAN, row.PAN, row.GST, row.GSTCertificate])
+    ];
+
+    const bankTable = [
+      [{ text: 'Bank Info', style: 'subheader', colSpan: 6, alignment: 'center' }, {}, {}, {}, {}, {}],
+      ['Account Holder', 'Account No', 'Bank Name', 'Branch', 'IFSC', 'Check Image'],
+      ...uniqueBank.map(row => [
+        row.AccountHolderName,
+        row.AccountNumber,
+        row.BankName,
+        row.BranchName,
+        row.IFSCCode,
+        row.CheckImg
+      ])
+    ];
+
+    // ✅ Font Setup (ensure these fonts exist in the specified folder)
+    const fonts = {
+      Roboto: {
+        normal: path.join(__dirname, 'fonts/Roboto-Regular.ttf'),
+        bold: path.join(__dirname, 'fonts/Roboto-Medium.ttf'),
+        italics: path.join(__dirname, 'fonts/Roboto-Italic.ttf'),
+        bolditalics: path.join(__dirname, 'fonts/Roboto-MediumItalic.ttf')
+      }
+    };
+
+    const printer = new PdfPrinter(fonts);
+
+    // ✅ PDF Document Layout
+    const docDefinition = {
+      content: [
+        { text: `User Data Report - UserID: ${userid}`, style: 'header' },
+
+        { table: { body: dealerTable }, layout: 'lightHorizontalLines' },
+        { text: '', pageBreak: 'after' },
+
+        { table: { body: locationTable }, layout: 'lightHorizontalLines' },
+        { text: '', pageBreak: 'after' },
+
+        { table: { body: contactTable }, layout: 'lightHorizontalLines' },
+        { text: '', pageBreak: 'after' },
+
+        { table: { body: taxTable }, layout: 'lightHorizontalLines' },
+        { text: '', pageBreak: 'after' },
+
+        { table: { body: bankTable }, layout: 'lightHorizontalLines' }
+      ],
+      styles: {
+        header: {
+          fontSize: 18,
+          bold: true,
+          alignment: 'center',
+          margin: [0, 0, 0, 20]
+        },
+        subheader: {
+          fontSize: 14,
+          bold: true,
+          margin: [0, 10, 0, 10]
+        }
+      },
+      defaultStyle: {
+        fontSize: 9
+      }
+    };
+
+    // ✅ Create PDF and return path
+    const pdfPath = `./pdf/user_${userid}_report.pdf`;
+    const pdfDoc = printer.createPdfKitDocument(docDefinition);
+    pdfDoc.pipe(fs.createWriteStream(pdfPath));
+    pdfDoc.end();
+
+    console.log(`✅ PDF created at: ${pdfPath}`);
+    return pdfPath;
+
+  } catch (error) {
+    throw new Error(`jsontoPDF failed: ${error.message}`);
+  }
+};
+
+
+export {IFSCBAnkMappingService,fetchContactDetailsService,jsontoPDF,existingUserDataService,pincodemasterService,pincodeService,createDealerService,createLocationService,designationService,contactDetailsbyLocationService,taxdetailsService,bankdetailsService}
