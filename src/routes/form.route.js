@@ -13,7 +13,7 @@ router.route('/create-dealer').post(createDealer)
 router.route('/create-location').post(createLocation)
 router.route('/contact').post(contactDetails)
 router.route('/existed-data').post(existingDataforUser)
-router.route('/pdf-mail').get(pdfmailer)
+router.route('/pdf-mail').post(pdfmailer)
 router.post('/tax-details', upload.single('file'), taxDetails);
 router.post('/bank-details', upload.single('file'), bankDetails);
 

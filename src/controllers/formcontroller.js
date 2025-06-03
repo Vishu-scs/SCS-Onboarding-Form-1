@@ -58,6 +58,7 @@ const citybyPincode = async (req, res) => {
 
 const createDealer = async (req, res) => {
     try {
+      const pool = await getPool1()
       const { brandid, dealer, oemcode, userid } = req.body;
   
       if (!brandid || !dealer || !oemcode || !userid) {
@@ -96,6 +97,7 @@ const createDealer = async (req, res) => {
 
 const createLocation = async (req, res) => {
   try {
+    const pool = await getPool1()
     const {
       dealerid, location, address, landmark, pincodeid, cityid,
       stateid, latitude, longitude, sims, gainer, audit, userid
@@ -399,11 +401,12 @@ try {
 
 const pdfmailer = async(req,res)=>{
   try {
-   const pdfPath = await jsontoPDF(46); // Generate PDF and get file path
+    const {userid} = req.body
+   const pdfPath = await jsontoPDF(userid); // Generate PDF and get file path
     // console.log(`Sending PDF file: ${pdfPath}`);
-    
     // Send the file to the client
-    return res.send(path.resolve(pdfPath), `UserReport_47.pdf`);
+    return res.send(path.resolve(pdfPath));
+    // res.send(pdfPath)
     
   } catch (error) {
     console.error('Error in pdfmailer:', error);

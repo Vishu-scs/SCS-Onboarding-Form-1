@@ -5,6 +5,8 @@ import path from 'path';
 import fs from 'fs'
 import { fileURLToPath } from 'url';
 import { dirname } from 'path';
+import { transformDealerData } from '../utils/jsondataformatter.js';
+import { text } from 'stream/consumers';
 
 
 const __filename = fileURLToPath(import.meta.url);
@@ -338,7 +340,7 @@ try {
     where userid = ${userid}
     `
   const result = await pool.request().query(query)
-  return result.recordset 
+  return result.recordset
 } catch (error) {
   throw new Error(`existingUserDataService failed : ${error.message}`);
 }
@@ -366,71 +368,25 @@ try {
 }
 }
 
+// const groupBy = (arr, key) =>
+//   arr.reduce((acc, obj) => {
+//     const k = obj[key];
+//     if (!acc[k]) acc[k] = [];
+//     acc[k].push(obj);
+//     return acc;
+// }, {});
+
 const jsontoPDF = async (userid) => {
-  try {
-    const data = await existingUserDataService(userid);
+    try {
+      let data = await existingUserDataService(userid);
+      console.log(data);
+      
+      data = await transformDealerData(data);
+      // console.log(data);
+    
+      // Extracting Dealer Name from data
+    const dealer = data.Dealer;
 
-    // ✅ Deduplicated and filtered arrays
-    const uniqueDealers = Array.from(new Map(data.map(row => [row.Dealerid, row])).values());
-
-    const uniqueLocations = Array.from(new Map(data.map(row => [row.LocationID, row])).values());
-
-    const uniqueContacts = Array.from(
-      new Map(data.map(row => [`${row.LocationID}-${row.DesignationID}`, row])).values()
-    ).filter(row => row.Name || row.Email || row.MobileNo || row.DesignationID);
-
-    const uniqueTax = Array.from(new Map(data.map(row => [row.LocationID, row])).values())
-      .filter(row => row.TAN || row.PAN || row.GST || row.GSTCertificate);
-
-    const uniqueBank = Array.from(new Map(data.map(row => [row.LocationID, row])).values())
-      .filter(row =>
-        row.AccountHolderName ||
-        row.AccountNumber ||
-        row.BankName ||
-        row.BranchName ||
-        row.IFSCCode ||
-        row.CheckImg
-      );
-
-    // ✅ Table Definitions
-    const dealerTable = [
-      [{ text: 'Dealer Info', style: 'subheader', colSpan: 5, alignment: 'center' }, {}, {}, {}, {}],
-      ['DealerID', 'BrandID', 'Dealer', 'OEMCode', 'UserID'],
-      ...uniqueDealers.map(row => [row.Dealerid, row.Brandid, row.Dealer, row.OEMCode, userid])
-    ];
-
-    const locationTable = [
-      [{ text: 'Location Info', style: 'subheader', colSpan: 7, alignment: 'center' }, {}, {}, {}, {}, {}, {}],
-      ['LocationID', 'Location', 'Address', 'Landmark', 'CityID', 'StateID', 'PincodeID'],
-      ...uniqueLocations.map(row => [row.LocationID, row.Location, row.Address, row.Landmark, row.CityID, row.StateID, row.PincodeID])
-    ];
-
-    const contactTable = [
-      [{ text: 'Contact Info', style: 'subheader', colSpan: 4, alignment: 'center' }, {}, {}, {}],
-      ['Name', 'Email', 'MobileNo', 'DesignationID'],
-      ...uniqueContacts.map(row => [row.Name, row.Email, row.MobileNo, row.DesignationID])
-    ];
-
-    const taxTable = [
-      [{ text: 'Tax Info', style: 'subheader', colSpan: 4, alignment: 'center' }, {}, {}, {}],
-      ['TAN', 'PAN', 'GST', 'GST Certificate'],
-      ...uniqueTax.map(row => [row.TAN, row.PAN, row.GST, row.GSTCertificate])
-    ];
-
-    const bankTable = [
-      [{ text: 'Bank Info', style: 'subheader', colSpan: 6, alignment: 'center' }, {}, {}, {}, {}, {}],
-      ['Account Holder', 'Account No', 'Bank Name', 'Branch', 'IFSC', 'Check Image'],
-      ...uniqueBank.map(row => [
-        row.AccountHolderName,
-        row.AccountNumber,
-        row.BankName,
-        row.BranchName,
-        row.IFSCCode,
-        row.CheckImg
-      ])
-    ];
-
-    // ✅ Font Setup (ensure these fonts exist in the specified folder)
     const fonts = {
       Roboto: {
         normal: path.join(__dirname, 'fonts/Roboto-Regular.ttf'),
@@ -441,57 +397,377 @@ const jsontoPDF = async (userid) => {
     };
 
     const printer = new PdfPrinter(fonts);
-
-    // ✅ PDF Document Layout
+    const logoPath = path.join(__dirname, 'Sparecare-Unit.png');
+    const getBase64Image = (imgPath) => {
+    const file = fs.readFileSync(imgPath);
+      return 'data:image/png;base64,' + file.toString('base64');
+    };
+    const watermarkBase64 = getBase64Image(path.join(__dirname, 'Sparecare-Unit.png'));
+    const headerimg = getBase64Image(path.join(__dirname,'2.png'));
+    
     const docDefinition = {
-      content: [
-        { text: `User Data Report - UserID: ${userid}`, style: 'header' },
-
-        { table: { body: dealerTable }, layout: 'lightHorizontalLines' },
-        { text: '', pageBreak: 'after' },
-
-        { table: { body: locationTable }, layout: 'lightHorizontalLines' },
-        { text: '', pageBreak: 'after' },
-
-        { table: { body: contactTable }, layout: 'lightHorizontalLines' },
-        { text: '', pageBreak: 'after' },
-
-        { table: { body: taxTable }, layout: 'lightHorizontalLines' },
-        { text: '', pageBreak: 'after' },
-
-        { table: { body: bankTable }, layout: 'lightHorizontalLines' }
-      ],
-      styles: {
-        header: {
-          fontSize: 18,
-          bold: true,
-          alignment: 'center',
-          margin: [0, 0, 0, 20]
+       header: {
+    margin: [40, 20, 40, 10],
+    columns: [
+      // {
+      //   text: 'Dealer Onboarding Summary',
+      //   style: 'headerTitle',
+      //   alignment: 'left'
+      // },
+     {
+      image: headerimg,
+      width: 150,
+      opacity: 1,
+      alignment:'left'
+    },
+      {
+        text: `Generated: ${new Date().toLocaleDateString()}`,
+        alignment: 'right',
+        fontSize: 8,
+        margin: [0, 5, 0, 0]
+      }
+    ]
+  },
+  content: [
+    {
+      text: dealer.Name,
+      style: 'title'
+    },
+    {
+      text: `OEM Code: ${dealer.OEMCode}`,
+      style: 'subtitle'
+    },
+    ...dealer.Locations.map((loc, index) => {
+      return [
+        {
+          
+          text:  ` Location ${index + 1}: ${loc.LocationName}`,
+          style: 'locationHeader'
         },
-        subheader: {
-          fontSize: 14,
-          bold: true,
-          margin: [0, 10, 0, 10]
+        {
+          style: 'infoTable',
+          table: {
+            widths: ['30%', '70%'],
+            body: [
+              ['Address', `${loc.Address.Street}`],
+              ['Landmark', loc.Address.Landmark],
+              ['Pincode', loc.Address.PincodeID],
+              ['City', loc.Address.CityID],
+              ['State', loc.Address.StateID],
+              ['Latitude', loc.Coordinates.Latitude],
+              ['Longitude', loc.Coordinates.Longitude]
+            ]
+          },
+          layout: 'lightHorizontalLines'
+        },
+        loc.Contacts.length
+          ? {
+              text: 'Contacts',
+              style: 'sectionHeader'
+            }
+          : null,
+        loc.Contacts.length
+          ? {
+              table: {
+                widths: ['*', '*', '*', '*'],
+                body: [
+                  ['Name', 'Email', 'Mobile No', 'DesignationID'],
+                  ...loc.Contacts.map(c => [
+                    c.Name || 'N/A',
+                    c.Email || 'N/A',
+                    c.MobileNo || 'N/A',
+                    c.DesignationID || 'N/A'
+                  ])
+                ]
+              },
+              layout: 'lightHorizontalLines'
+            }
+          : null,
+        {
+          text: 'Tax Details',
+          style: 'sectionHeader'
+        },
+        {
+          style: 'infoTable',
+          table: {
+            widths: ['25%', '25%', '25%', '25%'],
+            body: [
+              ['TAN', 'PAN', 'GST', 'GST Certificate'],
+              [
+                loc.TaxDetails.TAN || 'N/A',
+                loc.TaxDetails.PAN || 'N/A',
+                loc.TaxDetails.GST || 'N/A',
+                // loc.TaxDetails.GSTCertificateURL || 'N/A'
+                {
+                text: 'View Certificate',
+                link: loc.TaxDetails.GSTCertificateURL || '',
+                color: 'blue',
+                decoration: 'underline'
+              }  
+              ]
+            ]
+          },
+          layout: 'lightHorizontalLines'
+        },
+        {
+  text: 'Bank Details',
+  style: 'sectionHeader'
+},
+{
+  style: 'infoTable',
+  table: {
+    widths: ['16%', '16%', '16%', '16%', '16%', '20%'],  // 6 columns
+    body: [
+      ['Account Holder', 'Account No', 'Bank', 'Branch', 'IFSC', 'Cancelled Cheque'],
+      [
+        loc.BankDetails.AccountHolderName || 'N/A',
+        loc.BankDetails.AccountNumber || 'N/A',
+        loc.BankDetails.BankName || 'N/A',
+        loc.BankDetails.BranchName || 'N/A',
+        loc.BankDetails.IFSCCode || 'N/A',
+        {
+          text: 'View Cancelled Cheque',
+          link: loc.BankDetails.CancelledChequeURL || '',
+          color: 'blue',
+          decoration: 'underline'
         }
-      },
-      defaultStyle: {
-        fontSize: 9
+      ]
+    ]
+  },
+  layout: 'lightHorizontalLines',
+  margin: [0, 0, 0, 20]
+},
+        { text: '', pageBreak: 'after' }
+      ].filter(Boolean);
+    }).flat()
+  ],
+
+  styles: {
+    title: {
+      fontSize: 18,
+      bold: true,
+      alignment: 'center',
+      margin: [0, 25, 0, 4]
+    },
+    subtitle: {
+      fontSize: 12,
+      alignment: 'center',
+      margin: [0, 2, 0, 0]
+    },
+    locationHeader: {
+      fontSize: 14,
+      bold: true,
+      margin: [0, 25, 0, 6],
+      decoration: 'underline'
+    },
+    sectionHeader: {
+      fontSize: 12,
+      bold: true,
+      margin: [0, 10, 0, 10]
+    },
+    infoTable: {
+      margin: [0, 0, 0, 10]
+    }
+  },
+
+  defaultStyle: {
+    font: 'Roboto',
+    fontSize: 10
+  },
+  background: function(currentPage, pageSize) {
+    return {
+      image: watermarkBase64,
+      width: 300,
+      opacity: 0.15,
+      absolutePosition: {
+        x: (pageSize.width - 300  ) / 2, // center horizontally
+        y: (pageSize.height - 300 ) / 2 // center vertically
       }
     };
+  },
+  footer: function(currentPage, pageCount) {
+  return {
+    margin: [40,5, 40, 10],
+    columns: [
+      {
+        width: '*',
+        text: 'Sparecare Solutions Pvt. Ltd.\nJMD Pacific Square Sector 15 Part 2 Gurugram, Haryana',
+        fontSize: 8,
+        alignment: 'left'
+      },
+      {
+        width: 'auto',
+        text: `Page ${currentPage} of ${pageCount}`,
+        fontSize: 6,
+        alignment: 'center'
+      },
+      {
+        width: '*',
+        text: {
+          text: 'www.sparecare.in',
+          link: 'https://www.sparecare.in',
+          color: 'blue',
+          decoration: 'underline'
+        },
+        fontSize: 8,
+        alignment: 'right'
+      }
+    ]
+  };
+},
+};
 
-    // ✅ Create PDF and return path
-    const pdfPath = `./pdf/user_${userid}_report.pdf`;
+
+
+    const pdfPath = path.join(`./pdf/user_${userid}_report.pdf`);
     const pdfDoc = printer.createPdfKitDocument(docDefinition);
     pdfDoc.pipe(fs.createWriteStream(pdfPath));
     pdfDoc.end();
 
     console.log(`✅ PDF created at: ${pdfPath}`);
     return pdfPath;
-
+    
   } catch (error) {
-    throw new Error(`jsontoPDF failed: ${error.message}`);
+    console.error(error);
+    throw new Error(`jsontoPDFGrouped failed: ${error.message}`);
   }
 };
+//   const jsontoPDF = async (userid) => {
+//     try {
+//       let data = await existingUserDataService(userid);
+//       // console.log(data);
+      
+//        data = await transformDealerData(data);
+//       // console.log(`pdfData: `,pdfData);
+      
+//       const dealers = groupBy(data, 'Dealerid');
+      
+//       const content = [];
+      
+//       for (const [dealerId, dealerData] of Object.entries(dealers)) {
+//         const dealerInfo = dealerData[0];
+//         content.push(
+//           { text: `Dealer: ${dealerInfo.Dealer} (ID: ${dealerId})`, style: 'header' },
+//           { text: `OEM Code: ${dealerInfo.OEMCode}\n\n`, style: 'subheader' }
+//         );
+        
+//         const locations = groupBy(dealerData, 'LocationID');
+        
+//         for (const [locationId, locationGroup] of Object.entries(locations)) {
+//           const location = locationGroup[0];
+//           content.push(
+//             { text: `📍 Location: ${location.Location} (ID: ${locationId})`, style: 'locationHeader' },
+//             {
+//               table: {
+//                 widths: ['*', '*'],
+//                 body: [
+//                   ['Address', `${location.Address}, ${location.Landmark}`],
+//                   ['City / State / Pincode', `${location.CityID} / ${location.StateID} / ${location.PincodeID}`],
+//                   ['Coordinates', `${location.Latitude}, ${location.Longitude}`],
+//                 ],
+//               },
+//               layout: 'lightHorizontalLines',
+//               margin: [0, 0, 0, 10],
+//             }
+//           );
+          
+//           // Contact Info
+//           const contacts = locationGroup.filter(r => r.Name || r.Email || r.MobileNo || r.DesignationID);
+//           if (contacts.length) {
+//             content.push({ text: '👥 Contacts', style: 'subsubheader' });
+//             content.push({
+//               table: {
+//                 widths: ['*', '*', '*', '*'],
+//                 body: [
+//                   ['Name', 'Email', 'Mobile No', 'DesignationID'],
+//                   ...contacts.map(c => [
+//                     c.Name || 'N/A',
+//                     c.Email || 'N/A',
+//                     c.MobileNo || 'N/A',
+//                     c.DesignationID || 'N/A',
+//                   ]),
+//                 ],
+//               },
+//               layout: 'lightHorizontalLines',
+//               margin: [0, 0, 0, 10],
+//             });
+//           }
+          
+//           // Tax Info
+//           if (location.TAN || location.PAN || location.GST || location.GSTCertificate) {
+//             content.push({ text: '💰 Tax Details', style: 'subsubheader' });
+//             content.push({
+//               table: {
+//                 widths: ['*', '*', '*', '*'],
+//                 body: [
+//                   ['TAN', 'PAN', 'GST', 'GST Certificate'],
+//                   [location.TAN || 'N/A', location.PAN || 'N/A', location.GST || 'N/A', location.GSTCertificate || 'N/A'],
+//                 ],
+//               },
+//               layout: 'lightHorizontalLines',
+//               margin: [0, 0, 0, 10],
+//             });
+//           }
+          
+//           // Bank Info
+//           if (location.AccountHolderName || location.AccountNumber || location.BankName || location.BranchName || location.IFSCCode || location.CheckImg) {
+//             content.push({ text: '🏦 Bank Details', style: 'subsubheader' });
+//             content.push({
+//               table: {
+//                 widths: ['*', '*', '*', '*', '*', '*'],
+//                 body: [
+//                   ['Holder', 'Acc No', 'Bank', 'Branch', 'IFSC', 'Cheque Img'],
+//                   [
+//                     location.AccountHolderName || 'N/A',
+//                     location.AccountNumber || 'N/A',
+//                     location.BankName || 'N/A',
+//                     location.BranchName || 'N/A',
+//                     location.IFSCCode || 'N/A',
+//                     location.CheckImg || 'N/A',
+//                   ],
+//                 ],
+//               },
+//               layout: 'lightHorizontalLines',
+//               margin: [0, 0, 0, 10],
+//             });
+//           }
+          
+//           content.push({ text: '', margin: [0, 0, 0, 20] });
+//         }
+        
+//         content.push({ text: '', pageBreak: 'after' });
+//       }
+//       const fonts = {
+//       Roboto: {
+//         normal: path.join(__dirname, 'fonts/Roboto-Regular.ttf'),
+//         bold: path.join(__dirname, 'fonts/Roboto-Medium.ttf'),
+//         italics: path.join(__dirname, 'fonts/Roboto-Italic.ttf'),
+//         bolditalics: path.join(__dirname, 'fonts/Roboto-MediumItalic.ttf')
+//       }
+//     };      const printer = new PdfPrinter(fonts);
+//     const docDefinition = {
+//       content,
+//       styles: {
+//         header: { fontSize: 16, bold: true, margin: [0, 10, 0, 4] },
+//         subheader: { fontSize: 12, bold: true, margin: [0, 0, 0, 10] },
+//         locationHeader: { fontSize: 12, bold: true, margin: [0, 5, 0, 5] },
+//         subsubheader: { fontSize: 11, bold: true, margin: [0, 4, 0, 4] },
+//       },
+//       defaultStyle: {
+//         fontSize: 9,
+//       },
+//     };
 
+//     const pdfPath = `./pdf/user_${userid}_report.pdf`;
+//     const pdfDoc = printer.createPdfKitDocument(docDefinition);
+//     pdfDoc.pipe(fs.createWriteStream(pdfPath));
+//     pdfDoc.end();
 
+//     console.log(`✅ PDF created at: ${pdfPath}`);
+//     return pdfPath;
+//   } catch (error) {
+//     console.error(error);
+//     throw new Error(`jsontoPDFGrouped failed: ${error.message}`);
+//   }
+// };
 export {IFSCBAnkMappingService,fetchContactDetailsService,jsontoPDF,existingUserDataService,pincodemasterService,pincodeService,createDealerService,createLocationService,designationService,contactDetailsbyLocationService,taxdetailsService,bankdetailsService}
