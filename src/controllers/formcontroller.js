@@ -1,8 +1,10 @@
-import { createDealerService , createLocationService, designationService, pincodemasterService, pincodeService, taxdetailsService , bankdetailsService, contactDetailsbyLocationService, fetchContactDetailsService, IFSCBAnkMappingService, existingUserDataService, jsontoPDF} from "../services/formservice.js";
+import { createDealerService , createLocationService, designationService, pincodemasterService, pincodeService, taxdetailsService , bankdetailsService, contactDetailsbyLocationService, fetchContactDetailsService, IFSCBAnkMappingService, existingUserDataService, jsontoPDF, locationInActiveService} from "../services/formservice.js";
 import fs from 'fs'
 import path from 'path'
 import { uploadToS3 } from "../middlewares/multer.middleware.js";
 import { getPool1 } from "../db/db.js";
+import { transformDealerData } from "../utils/jsondataformatter.js";
+import { checkLocationOwnership } from "../utils/formserviceChecks.js";
 
 const citybyPincode = async (req, res) => {
   try {
@@ -66,14 +68,14 @@ const createDealer = async (req, res) => {
           message: "brandid, dealer, oemcode, and userid are required"
         });
       }
-      const query = `select * from SCS_ONB_Dealer where addedby = ${userid}`
-      const check = await pool.request().query(query)
-      const existedDealer = check.recordset[0].Dealer
-      if(check.recordset.length > 0){
-        return res.status(400).json({
-          message:`${existedDealer} already onboarded using this email`
-        })
-      }
+      // const query = `select * from SCS_ONB_Dealer where addedby = ${userid}`
+      // const check = await pool.request().query(query)
+      // const existedDealer = check.recordset[0].Dealer
+      // if(check.recordset.length > 0){
+      //   return res.status(400).json({
+      //     message:`${existedDealer} already onboarded using this email`
+      //   })
+      // }
 
       const result = await createDealerService(brandid, dealer, userid, oemcode);
   
@@ -124,8 +126,9 @@ const createLocation = async (req, res) => {
 
     res.status(200).json({
       message: "Location created successfully",
-      locationId: result.LocationID,
-      location: result.Location
+      // locationId: result.LocationID,
+      // location: result.Location
+      Locations:result.Locations
     });
 
   } catch (error) {
@@ -146,6 +149,7 @@ try {
     })
 }
 }
+
 const pincode = async(req,res)=>{
 try {
         const data = await pincodemasterService();
@@ -158,59 +162,73 @@ try {
     })
 }
 }
-const contactDetails = async(req,res)=>{
-try {
-    const {locationId,designationId,Name,MobileNo,Email,isSame,userId} = req.body
-        if (!locationId || !designationId ||!userId) {
-      return res.status(400).json({
-        message: "All fields (locationId, designationId, userId) are required"
-      });
-    }    
-    if((!Name || !MobileNo || !Email) && (!isSame)){
-      return res.status(400).json({
-        message: `(Name , MobileNo and Email) or (isSame) are required`
-      });
-    }
-    let data
-    if(!isSame){
-     data = await contactDetailsbyLocationService(locationId,designationId,Name,MobileNo,Email,userId)
-      if (data?.alreadyExists) {
-      return res.status(200).json({
-        message: data.message,
-        Data: []
-      });
-    }
-  }
-  else{
-      // console.log(isSame);
-      const pool = await getPool1()
-      let SName , SMobileNo , SEmail
-    try {
-            const result = await fetchContactDetailsService(isSame,designationId)
-            SName = result.recordset[0].Name
-            SMobileNo = result.recordset[0].MobileNo
-            SEmail = result.recordset[0].Email
-    } catch (error) {
-      return res.status(500).json({Error:error.message})
-    }
-       data = await contactDetailsbyLocationService(locationId,designationId,SName,SMobileNo,SEmail,userId)
-      if (data?.alreadyExists) {
-      return res.status(200).json({
-        message: data.message,
-        Data: []
-      });
-    }
 
-  }
-    res.status(200).json({
-      message: "Contact details saved successfully",
-      Data : data.recordset
+// const contactDetails = async(req,res)=>{
+// try {
+//     const {locationId,designationId,Name,MobileNo,Email,isSame,userId} = req.body
+//         if (!locationId || !designationId ||!userId) {
+//       return res.status(400).json({
+//         message: "All fields (locationId, designationId, userId) are required"
+//       });
+//     }    
+//     if((!Name || !MobileNo || !Email) && (!isSame)){
+//       return res.status(400).json({
+//         message: `(Name , MobileNo and Email) or (isSame) are required`
+//       });
+//     }
+//     let data
+//     if(!isSame){
+//      data = await contactDetailsbyLocationService(locationId,designationId,Name,MobileNo,Email,userId)
+//       if (data?.alreadyExists) {
+//       return res.status(200).json({
+//         message: data.message,
+//         Data: []
+//       });
+//     }
+//   }
+//   else{
+//       // console.log(isSame);
+//       const pool = await getPool1()
+//       let SName , SMobileNo , SEmail
+//     try {
+//             const result = await fetchContactDetailsService(isSame,designationId)
+//             SName = result.recordset[0].Name
+//             SMobileNo = result.recordset[0].MobileNo
+//             SEmail = result.recordset[0].Email
+//     } catch (error) {
+//       return res.status(500).json({Error:error.message})
+//     }
+//        data = await contactDetailsbyLocationService(locationId,designationId,SName,SMobileNo,SEmail,userId)
+//       if (data?.alreadyExists) {
+//       return res.status(200).json({
+//         message: data.message,
+//         Data: []
+//       });
+//     }
+
+//   }
+//     res.status(200).json({
+//       message: "Contact details saved successfully",
+//       Data : data.recordset
+//     })
+// } catch (error) {
+//   res.status(500).json({
+//     Error:error.message
+//   })
+// }
+// }
+
+const contactDetails = async(req,res)=>{
+  const contactArray = req.body
+  if(!Array.isArray(contactArray)){
+    return res.status(400).json({
+      message:`contactArray is not a array`
     })
-} catch (error) {
-  res.status(500).json({
-    Error:error.message
+  }
+  const data  = await contactDetailsbyLocationService(contactArray)
+  res.status(207).json({
+    Data:data
   })
-}
 }
 
 const taxDetails = async (req, res) => {
@@ -239,14 +257,19 @@ const taxDetails = async (req, res) => {
     const results = [];
     const failed = [];
 
-    // 🔧 Convert comma-separated string to array of integers
+    // Convert comma-separated string to array of integers
     if (typeof locationIds === 'string') {
       locationIds = locationIds.split(',').map(id => parseInt(id.trim())).filter(Boolean);
     }
 
-    // 2️⃣ Loop through locationIds and insert
+    //  Loop through locationIds and insert
     for (const locationId of locationIds) {
       try {
+        const isOwner = await checkLocationOwnership(locationId, userId);
+    if (!isOwner) {
+      failed.push({ locationId, message: `Location ${locationId} is not created by user ${userId}` });
+      continue;
+    }
         const data = await taxdetailsService(locationId, tan, pan, gst, { url, key }, userId);
         if (data?.alreadyExists) {
           failed.push({ locationId, message: "Tax details already exist" });
@@ -281,6 +304,7 @@ try {
     // 1️⃣ Upload only once
     let url, key;
     try {
+
       const uploadResult = await uploadToS3(file);
       url = uploadResult.url;
       key = uploadResult.key;
@@ -298,6 +322,11 @@ try {
     // Loop through locationIds and insert
     for (const locationId of locationIds) {
       try {
+        const isOwner = await checkLocationOwnership(locationId, userId);
+    if (!isOwner) {
+      failed.push({ locationId, message: `Location ${locationId} is not created by user ${userId}` });
+      continue;
+    }
         const data = await bankdetailsService(locationId, accholdername , accno , bankname ,branchname, ifsc ,{url , key} , userId);
         if (data?.alreadyExists) {
           failed.push({ locationId, message: "Bank details already exist" });
@@ -337,11 +366,12 @@ try {
 
 const existingDataforUser = async(req,res)=>{
 try {
-    const pool = await getPool1()
     const {userid} = req.body
-    const rawData = await existingUserDataService(userid)
+    let rawData = await existingUserDataService(userid)
+    // data = transformDealerData(data)
+
     const grouped = {};
-  
+
       rawData.forEach(row => {
         const locId = row.LocationID;
   
@@ -356,8 +386,11 @@ try {
             Address: row.Address,
             Landmark: row.Landmark,
             PincodeID: row.PincodeID,
+            Pincode:row.PinCodeName,  
             CityID: row.CityID,
+            City:row.CityName,
             StateID: row.StateID,
+            State:row.StateName,
             Latitude: row.Latitude,
             Longitude: row.Longitude,
             Contacts: [],
@@ -402,9 +435,12 @@ try {
 const pdfmailer = async(req,res)=>{
   try {
     const {userid} = req.body
-   const pdfPath = await jsontoPDF(userid); // Generate PDF and get file path
+        //Getting IP
+    const ip = req.headers['x-forwarded-for'] || req.socket.remoteAddress;
+   const pdfPath = await jsontoPDF(userid,ip); // Generate PDF and get file path
     // console.log(`Sending PDF file: ${pdfPath}`);
     // Send the file to the client
+     
     return res.send(path.resolve(pdfPath));
     // res.send(pdfPath)
     
@@ -413,4 +449,19 @@ const pdfmailer = async(req,res)=>{
     return res.status(500).send({ error: error.message });
   }
 }
-export {pdfmailer,IFSCBAnkMapping,citybyPincode,createDealer,createLocation ,designation ,existingDataforUser, contactDetails ,taxDetails , bankDetails , pincode}
+
+const locationInActive = async(req,res)=>{
+try {
+      const {userId , dealerId  , locationId} = req.body
+      const data = await locationInActiveService(userId , dealerId  , locationId)
+      res.status(200).json({
+        Data:data
+      })
+} catch (error) {
+  res.status(500).json({
+    Error:error.message
+  })
+}
+
+}
+export {locationInActive,pdfmailer,IFSCBAnkMapping,citybyPincode,createDealer,createLocation ,designation ,existingDataforUser, contactDetails ,taxDetails , bankDetails , pincode}

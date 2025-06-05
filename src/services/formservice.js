@@ -1,12 +1,15 @@
 import { getPool1, getPool2 } from '../db/db.js';
 import { uploadToS3 ,deleteFromS3} from '../middlewares/multer.middleware.js';
+import sql from 'mssql'
 import PdfPrinter from 'pdfmake';
 import path from 'path';
 import fs from 'fs'
 import { fileURLToPath } from 'url';
 import { dirname } from 'path';
 import { transformDealerData } from '../utils/jsondataformatter.js';
-import { text } from 'stream/consumers';
+import { pdfmappingFunction } from '../utils/mappingfunction.js';
+import { formatDateTime } from '../utils/dateformatter.js';
+
 
 
 const __filename = fileURLToPath(import.meta.url);
@@ -27,6 +30,7 @@ try {
     throw new Error(`pincodeService failed: ${error.message}`);
 }
 }
+
 const createDealerService = async (brandid, dealer, userid, oemcode) => {
     try {
       const pool = await getPool1();
@@ -69,7 +73,7 @@ const createDealerService = async (brandid, dealer, userid, oemcode) => {
     } catch (error) {
       throw new Error(`createDealerService failed: ${error.message}`);
     }
-  };
+};
 
 const createLocationService = async (
   dealerid, location, address, landmark, pincodeid, cityid, stateid,
@@ -122,20 +126,29 @@ const createLocationService = async (
           (@Dealerid, @Location, @Address, @Landmark, @PincodeID, @CityID, @StateID,
            @Latitude, @Longitude, @SIMS, @Gainer, @Audit, @Addedby)
       `);
-
+       let associatedLocations;
+    try {
+        const associatedLocationsQuery = `select LocationID , Location from SCS_onb_locationdetails where dealerid = (select dealerid from SCS_onb_locationdetails where locationid = ${insertResult.recordset[0].LocationID}  )and Addedby = ${userid}`
+         associatedLocations =  await pool.request().query(associatedLocationsQuery)
+    } catch (error) {
+        throw new Error(`associatedLocationsQuery failed: Error in Fetching Associated Locations \n ${error.message}`);
+    }
+    
     return {
       created: true,
-      LocationID: insertResult.recordset[0].LocationID,
-      Location: insertResult.recordset[0].Location
+      Locations : associatedLocations.recordset
+      // LocationID: insertResult.recordset[0].LocationID,
+      // Location: insertResult.recordset[0].Location
     };
 
   } catch (error) {
     throw new Error(`createLocationService failed: ${error.message}`);
   }
 };
+
 const designationService = async()=>{
-try {
-        const pool = await getPool1()
+  try {
+    const pool = await getPool1()
         const query = `select ID , Designation from SCS_ONB_DesignationMaster`
         const result = await pool.request().query(query)
         return result
@@ -155,89 +168,101 @@ try {
     }
 }
 
-const contactDetailsbyLocationService = async(locationId,designationId,Name,MobileNo,Email,userId)=>{
-try {
-        const pool = await getPool1()
+const contactDetailsbyLocationService = async (contactList) => {
+  const pool = await getPool1();
+  const transaction = new sql.Transaction(pool); 
+  const results = [];
+
+  try {
+    await transaction.begin();
+
+    for (const contact of contactList) {
+      const { locationName: locationIds, designation, name, phone, email, userId } = contact;
+
+      for (const locationId of locationIds) {
+        //  Create request bound to transaction
+        const checkRequest = new sql.Request(transaction);
+
+        //Check locationid and userID mapping (Check for locationid which must be created by supplied userId)
+         const locationCheckRequest = new sql.Request(transaction);
+        const locationCheck = await locationCheckRequest
+          .input('LocationID', locationId)
+          .input('UserID', userId)
+          .query(`
+            SELECT 1 FROM SCS_ONB_LocationDetails 
+            WHERE LocationID = @LocationID AND AddedBy = @UserID
+          `);
+
+        if (locationCheck.recordset.length === 0) {
+          results.push({
+            locationId,
+            designation,
+            status: 'error',
+            message: `LocationID ${locationId} is not created by userId ${userId}`
+          });
+          continue;
+        }
+        
+        // Check for existing record
         const checkQuery = `
-      SELECT 1 FROM SCS_ONB_ContactDetails WHERE LocationID = @LocationID and DesignationID = @designationId
-    `;
-    const existing = await pool.request()
-      .input('LocationID', locationId)
-      .input('designationId',designationId )
-      .query(checkQuery);
+          SELECT 1 FROM SCS_ONB_ContactDetails 
+          WHERE LocationID = @LocationID AND DesignationID = @designationId
+        `;
+        const existing = await checkRequest
+          .input('LocationID', locationId)
+          .input('designationId', designation)
+          .query(checkQuery);
 
-    if (existing.recordset.length > 0) {
-      return {
-        alreadyExists: true,
-        message: "Contact details already exist for this LocationID and Designation"
-      };
+        if (existing.recordset.length > 0) {
+          results.push({
+            locationId,
+            designation,
+            status: 'duplicate',
+            message: 'Contact already exists'
+          });
+          continue;
+        }
+
+        
+        
+
+        // ✅ Create another request bound to transaction
+        const insertRequest = new sql.Request(transaction);
+        const insertQuery = `
+          INSERT INTO SCS_ONB_ContactDetails 
+          (LocationID, DesignationID, Name, MobileNo, Email, Addedby)
+          VALUES 
+          (@LocationID, @DesignationID, @Name, @MobileNo, @Email, @Addedby)
+        `;
+        await insertRequest
+          .input('LocationID', locationId)
+          .input('DesignationID', designation)
+          .input('Name', name)
+          .input('MobileNo', phone)
+          .input('Email', email)
+          .input('Addedby', userId)
+          .query(insertQuery);
+
+        results.push({
+          locationId,
+          designation,
+          status: 'inserted',
+          message: 'Contact inserted successfully'
+        });
+      }
     }
-        const query = `
-        INSERT INTO SCS_ONB_ContactDetails(LocationID,DesignationID,Name,MobileNo,Email,Addedby)
-        Values(@LocationID,@DesignationID,@Name,@MobileNo,@Email,@Addedby)
-        `
-        const result = await pool.request()
-        .input('LocationID',locationId)
-        .input('DesignationID',designationId)
-        .input('Name',Name)
-        .input('MobileNo',MobileNo)
-        .input('Email',Email)
-        .input('Addedby',userId)
-        .query(query)
-        return result 
-} catch (error) {
-    throw new Error(`contactDetailsbyLocationService failed: ${error.message}`);   
-}
-}
 
-// const taxdetailsService = async(locationId,tan,pan,gst,gstimg,userId)=>{
-//   let url , key
-// try {
-//     const pool = await getPool1()
-//         // Check if entry already exists for this LocationID
-//     const checkQuery = `
-//       SELECT 1 FROM SCS_ONB_TaxDetails WHERE LocationID = @LocationID
-//     `;
-//     const existing = await pool.request()
-//       .input('LocationID', locationId)
-//       .query(checkQuery);
+    await transaction.commit();
+    return results;
 
-//     if (existing.recordset.length > 0) {
-//       return {
-//         alreadyExists: true,
-//         message: "Tax details already exist for this LocationID"
-//       };
-//     }
-//   try {
-//        const uploadResult  = await uploadToS3(gstimg);
-//        url = uploadResult.url
-//        key = uploadResult.key
-//       //  console.log(url,key);
-       
+  } catch (error) {
+    if (transaction) {
+      await transaction.rollback();
+    }
+    throw new Error(`Transaction failed: ${error.message}`);
+  }
+};
 
-//   } catch (error) {
-//     throw new Error(`Error in uploading gstimage to aws-s3: ${error.message}`);
-//   }
-//   const query = `
-//                 INSERT INTO SCS_ONB_TaxDetails(LocationID,TAN,PAN,GST,GSTCertificate,Addedby)
-//                 Values(@Locationid,@tan,@pan,@gst,@url,@userid)
-//   `
-//   const result = await pool.request()
-//           .input('LocationID',locationId)
-//           .input('tan',tan)
-//           .input('pan',pan)
-//           .input('gst',gst)
-//           .input('url',url)
-//           .input('userid',userId)
-//           .query(query)
-//   return result
-// } catch (error) {
-//   if(key){
-//     await deleteFromS3(key);
-//   }
-//   throw new Error(`taxdetailsService failed : ${error.message}`);
-// }
-// }
 const taxdetailsService = async (locationId, tan, pan, gst, fileObj, userId) => {
   let key = fileObj.key;
   let url = fileObj.url;
@@ -331,13 +356,16 @@ const existingUserDataService = async(userid)=>{
 try {
     const pool = await getPool1();
     const query = `
-    select Brandid ,d.Dealerid , ld.LocationID, Dealer , OEMCode , Location , Address ,Landmark, PincodeID , CityID , StateID , Latitude , Longitude , DesignationID ,Name, MobileNo , Email , TAN , PAN , GST , GSTCertificate , AccountHolderName , AccountNumber, BankName , BranchName , IFSCCode , CheckImg
+    select Brandid ,d.Dealerid , ld.LocationID, d.Dealer , OEMCode , Location , Address ,Landmark, PincodeID, pm.PinCodeName, CityID ,cm.CityName, StateID ,sm.StateName, Latitude , Longitude , DesignationID ,Name, MobileNo , Email , TAN , PAN , GST , GSTCertificate , AccountHolderName , AccountNumber, BankName , BranchName , IFSCCode , CheckImg
     from SCS_ONB_Dealer d 
-    join  SCS_ONB_LocationDetails ld on ld.Dealerid = d.Dealerid
+    left join  SCS_ONB_LocationDetails ld on ld.Dealerid = d.Dealerid
     left join SCS_ONB_ContactDetails cd  on cd.LocationID = ld.LocationID
     left join SCS_ONB_TaxDetails td  on td.LocationID = ld.LocationID
     left join SCS_ONB_BankDetails bd  on bd.LocationID = ld.LocationID
-    where userid = ${userid}
+	  left join z_scope..PinCodeMaster pm  on ld.PincodeID = pm.PinCodeCode
+	  left join z_scope..CityMaster cm on ld.CityID = cm.CityCode
+	  left join z_scope..StateMaster sm on ld.StateID = sm.StateCode
+    where d.Addedby = ${userid} and ld.status = 1
     `
   const result = await pool.request().query(query)
   return result.recordset
@@ -376,14 +404,18 @@ try {
 //     return acc;
 // }, {});
 
-const jsontoPDF = async (userid) => {
+const jsontoPDF = async (userid,ip) => {
     try {
       let data = await existingUserDataService(userid);
-      console.log(data);
       
-      data = await transformDealerData(data);
+      data = transformDealerData(data);
       // console.log(data);
-    
+      // console.log(data.Dealer.Locations[0]);
+
+      data = await pdfmappingFunction(data);
+
+      const date = formatDateTime(new Date().toISOString())
+
       // Extracting Dealer Name from data
     const dealer = data.Dealer;
 
@@ -421,7 +453,8 @@ const jsontoPDF = async (userid) => {
       alignment:'left'
     },
       {
-        text: `Generated: ${new Date().toLocaleDateString()}`,
+        // text: `Auto Generated: ${new Date().toLocaleDateString()}`,
+        text: `Auto Generated: ${date}`,
         alignment: 'right',
         fontSize: 8,
         margin: [0, 5, 0, 0]
@@ -451,9 +484,9 @@ const jsontoPDF = async (userid) => {
             body: [
               ['Address', `${loc.Address.Street}`],
               ['Landmark', loc.Address.Landmark],
-              ['Pincode', loc.Address.PincodeID],
-              ['City', loc.Address.CityID],
-              ['State', loc.Address.StateID],
+              ['Pincode', loc.Address.Pincode],
+              ['City', loc.Address.City],
+              ['State', loc.Address.State],
               ['Latitude', loc.Coordinates.Latitude],
               ['Longitude', loc.Coordinates.Longitude]
             ]
@@ -469,14 +502,14 @@ const jsontoPDF = async (userid) => {
         loc.Contacts.length
           ? {
               table: {
-                widths: ['*', '*', '*', '*'],
+                widths: ['20%', '30%', '23%', '25%'],
                 body: [
-                  ['Name', 'Email', 'Mobile No', 'DesignationID'],
+                  ['Name', 'Email', 'Mobile No', 'Designation'],
                   ...loc.Contacts.map(c => [
                     c.Name || 'N/A',
                     c.Email || 'N/A',
                     c.MobileNo || 'N/A',
-                    c.DesignationID || 'N/A'
+                    c.Designation || 'N/A'
                   ])
                 ]
               },
@@ -516,7 +549,7 @@ const jsontoPDF = async (userid) => {
 {
   style: 'infoTable',
   table: {
-    widths: ['16%', '16%', '16%', '16%', '16%', '20%'],  // 6 columns
+    widths: ['15%', '15%', '15%', '15%', '15%', '25%'],  // 6 columns
     body: [
       ['Account Holder', 'Account No', 'Bank', 'Branch', 'IFSC', 'Cancelled Cheque'],
       [
@@ -535,7 +568,7 @@ const jsontoPDF = async (userid) => {
     ]
   },
   layout: 'lightHorizontalLines',
-  margin: [0, 0, 0, 20]
+  margin: [0, 0, 0, 0]
 },
         { text: '', pageBreak: 'after' }
       ].filter(Boolean);
@@ -603,12 +636,10 @@ const jsontoPDF = async (userid) => {
       },
       {
         width: '*',
-        text: {
-          text: 'www.sparecare.in',
-          link: 'https://www.sparecare.in',
-          color: 'blue',
-          decoration: 'underline'
-        },
+                text: [
+          { text: 'www.sparecare.in\n', link: 'https://www.sparecare.in', color: 'blue', decoration: 'underline' },
+          { text: `IP: ${ip}` }
+        ],
         fontSize: 8,
         alignment: 'right'
       }
@@ -616,9 +647,6 @@ const jsontoPDF = async (userid) => {
   };
 },
 };
-
-
-
     const pdfPath = path.join(`./pdf/user_${userid}_report.pdf`);
     const pdfDoc = printer.createPdfKitDocument(docDefinition);
     pdfDoc.pipe(fs.createWriteStream(pdfPath));
@@ -632,142 +660,39 @@ const jsontoPDF = async (userid) => {
     throw new Error(`jsontoPDFGrouped failed: ${error.message}`);
   }
 };
-//   const jsontoPDF = async (userid) => {
-//     try {
-//       let data = await existingUserDataService(userid);
-//       // console.log(data);
-      
-//        data = await transformDealerData(data);
-//       // console.log(`pdfData: `,pdfData);
-      
-//       const dealers = groupBy(data, 'Dealerid');
-      
-//       const content = [];
-      
-//       for (const [dealerId, dealerData] of Object.entries(dealers)) {
-//         const dealerInfo = dealerData[0];
-//         content.push(
-//           { text: `Dealer: ${dealerInfo.Dealer} (ID: ${dealerId})`, style: 'header' },
-//           { text: `OEM Code: ${dealerInfo.OEMCode}\n\n`, style: 'subheader' }
-//         );
-        
-//         const locations = groupBy(dealerData, 'LocationID');
-        
-//         for (const [locationId, locationGroup] of Object.entries(locations)) {
-//           const location = locationGroup[0];
-//           content.push(
-//             { text: `📍 Location: ${location.Location} (ID: ${locationId})`, style: 'locationHeader' },
-//             {
-//               table: {
-//                 widths: ['*', '*'],
-//                 body: [
-//                   ['Address', `${location.Address}, ${location.Landmark}`],
-//                   ['City / State / Pincode', `${location.CityID} / ${location.StateID} / ${location.PincodeID}`],
-//                   ['Coordinates', `${location.Latitude}, ${location.Longitude}`],
-//                 ],
-//               },
-//               layout: 'lightHorizontalLines',
-//               margin: [0, 0, 0, 10],
-//             }
-//           );
-          
-//           // Contact Info
-//           const contacts = locationGroup.filter(r => r.Name || r.Email || r.MobileNo || r.DesignationID);
-//           if (contacts.length) {
-//             content.push({ text: '👥 Contacts', style: 'subsubheader' });
-//             content.push({
-//               table: {
-//                 widths: ['*', '*', '*', '*'],
-//                 body: [
-//                   ['Name', 'Email', 'Mobile No', 'DesignationID'],
-//                   ...contacts.map(c => [
-//                     c.Name || 'N/A',
-//                     c.Email || 'N/A',
-//                     c.MobileNo || 'N/A',
-//                     c.DesignationID || 'N/A',
-//                   ]),
-//                 ],
-//               },
-//               layout: 'lightHorizontalLines',
-//               margin: [0, 0, 0, 10],
-//             });
-//           }
-          
-//           // Tax Info
-//           if (location.TAN || location.PAN || location.GST || location.GSTCertificate) {
-//             content.push({ text: '💰 Tax Details', style: 'subsubheader' });
-//             content.push({
-//               table: {
-//                 widths: ['*', '*', '*', '*'],
-//                 body: [
-//                   ['TAN', 'PAN', 'GST', 'GST Certificate'],
-//                   [location.TAN || 'N/A', location.PAN || 'N/A', location.GST || 'N/A', location.GSTCertificate || 'N/A'],
-//                 ],
-//               },
-//               layout: 'lightHorizontalLines',
-//               margin: [0, 0, 0, 10],
-//             });
-//           }
-          
-//           // Bank Info
-//           if (location.AccountHolderName || location.AccountNumber || location.BankName || location.BranchName || location.IFSCCode || location.CheckImg) {
-//             content.push({ text: '🏦 Bank Details', style: 'subsubheader' });
-//             content.push({
-//               table: {
-//                 widths: ['*', '*', '*', '*', '*', '*'],
-//                 body: [
-//                   ['Holder', 'Acc No', 'Bank', 'Branch', 'IFSC', 'Cheque Img'],
-//                   [
-//                     location.AccountHolderName || 'N/A',
-//                     location.AccountNumber || 'N/A',
-//                     location.BankName || 'N/A',
-//                     location.BranchName || 'N/A',
-//                     location.IFSCCode || 'N/A',
-//                     location.CheckImg || 'N/A',
-//                   ],
-//                 ],
-//               },
-//               layout: 'lightHorizontalLines',
-//               margin: [0, 0, 0, 10],
-//             });
-//           }
-          
-//           content.push({ text: '', margin: [0, 0, 0, 20] });
-//         }
-        
-//         content.push({ text: '', pageBreak: 'after' });
-//       }
-//       const fonts = {
-//       Roboto: {
-//         normal: path.join(__dirname, 'fonts/Roboto-Regular.ttf'),
-//         bold: path.join(__dirname, 'fonts/Roboto-Medium.ttf'),
-//         italics: path.join(__dirname, 'fonts/Roboto-Italic.ttf'),
-//         bolditalics: path.join(__dirname, 'fonts/Roboto-MediumItalic.ttf')
-//       }
-//     };      const printer = new PdfPrinter(fonts);
-//     const docDefinition = {
-//       content,
-//       styles: {
-//         header: { fontSize: 16, bold: true, margin: [0, 10, 0, 4] },
-//         subheader: { fontSize: 12, bold: true, margin: [0, 0, 0, 10] },
-//         locationHeader: { fontSize: 12, bold: true, margin: [0, 5, 0, 5] },
-//         subsubheader: { fontSize: 11, bold: true, margin: [0, 4, 0, 4] },
-//       },
-//       defaultStyle: {
-//         fontSize: 9,
-//       },
-//     };
 
-//     const pdfPath = `./pdf/user_${userid}_report.pdf`;
-//     const pdfDoc = printer.createPdfKitDocument(docDefinition);
-//     pdfDoc.pipe(fs.createWriteStream(pdfPath));
-//     pdfDoc.end();
+const locationInActiveService = async(userId , dealerId  , locationId)=>{
+try {
+    const pool = await getPool1()
+    const query = `select * from SCS_onb_locationdetails where addedby = @userid and dealerid = @dealerid and locationid = @locationid`
+    const result = await pool.request()
+                .input('dealerid',sql.Int,dealerId)
+                .input('userid',sql.Int,userId)
+                .input('locationid',sql.Int,locationId)
+                .query(query)
+    if(result.recordset.length === 0){
+      const message = `This Location Does not Exist for this Dealer`
+      return message
+    }
+    else{
+        try {
+                const query = `Update SCS_onb_locationdetails set status = 0 where addedby = @userid and dealerid = @dealerid and locationid = @locationid`
+                await pool.request()
+                .input('dealerid',sql.Int,dealerId)
+                .input('userid',sql.Int,userId)
+                .input('locationid',sql.Int,locationId)
+                .query(query)
+                  const message =`Location is set to InActive`
+                  return message
+        } catch (error) {
+          throw new Error(`Failed to Inactive the location ${error.message}`);
+          
+        }
+    }
+} catch (error) {
+  throw new Error(`locationInActiveService failed : ${error.message}`);
+  
+}
+}
 
-//     console.log(`✅ PDF created at: ${pdfPath}`);
-//     return pdfPath;
-//   } catch (error) {
-//     console.error(error);
-//     throw new Error(`jsontoPDFGrouped failed: ${error.message}`);
-//   }
-// };
-export {IFSCBAnkMappingService,fetchContactDetailsService,jsontoPDF,existingUserDataService,pincodemasterService,pincodeService,createDealerService,createLocationService,designationService,contactDetailsbyLocationService,taxdetailsService,bankdetailsService}
+export {locationInActiveService,IFSCBAnkMappingService,fetchContactDetailsService,jsontoPDF,existingUserDataService,pincodemasterService,pincodeService,createDealerService,createLocationService,designationService,contactDetailsbyLocationService,taxdetailsService,bankdetailsService}
