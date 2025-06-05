@@ -12,4 +12,17 @@ const checkLocationOwnership = async (locationId, userId) => {
   return result.recordset.length > 0;
 };
 
-export {checkLocationOwnership}
+const emailbyuserID = async(userid)=>{
+try {
+        const pool = await getPool1()
+        const query = `use [z_scope] select Email from SCS_ONB_User where UserId = ${userid}`
+        const result = await pool.request().query(query)
+        
+        return result.recordset[0].Email
+} catch (error) {
+    throw new Error(`emailbyuserID failed : ${error.message}`);
+}
+
+}
+
+export {checkLocationOwnership, emailbyuserID }

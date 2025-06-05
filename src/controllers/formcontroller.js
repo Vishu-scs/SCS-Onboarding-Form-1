@@ -1,10 +1,12 @@
-import { createDealerService , createLocationService, designationService, pincodemasterService, pincodeService, taxdetailsService , bankdetailsService, contactDetailsbyLocationService, fetchContactDetailsService, IFSCBAnkMappingService, existingUserDataService, jsontoPDF, locationInActiveService} from "../services/formservice.js";
+import { createDealerService , createLocationService, designationService, pincodemasterService, pincodeService, taxdetailsService , bankdetailsService, contactDetailsbyLocationService, fetchContactDetailsService, IFSCBAnkMappingService, existingUserDataService, jsontoPDF, locationInActiveService, LocationsbyUserid} from "../services/formservice.js";
 import fs from 'fs'
 import path from 'path'
 import { uploadToS3 } from "../middlewares/multer.middleware.js";
 import { getPool1 } from "../db/db.js";
 import { transformDealerData } from "../utils/jsondataformatter.js";
-import { checkLocationOwnership } from "../utils/formserviceChecks.js";
+import { checkLocationOwnership, emailbyuserID } from "../utils/formserviceChecks.js";
+import { finalSubmissionMail } from "../services/mailservice.js";
+import { transporter, generateMailOptions } from "../services/mailservice.js"; 
 
 const citybyPincode = async (req, res) => {
   try {
@@ -95,7 +97,7 @@ const createDealer = async (req, res) => {
       console.error("createDealer error:", error);
       res.status(500).json({ error: error.message });
     }
-  };
+};
 
 const createLocation = async (req, res) => {
   try {
@@ -441,7 +443,7 @@ const pdfmailer = async(req,res)=>{
     // console.log(`Sending PDF file: ${pdfPath}`);
     // Send the file to the client
      
-    return res.send(path.resolve(pdfPath));
+     res.send(path.resolve(pdfPath));
     // res.send(pdfPath)
     
   } catch (error) {
@@ -464,4 +466,60 @@ try {
 }
 
 }
-export {locationInActive,pdfmailer,IFSCBAnkMapping,citybyPincode,createDealer,createLocation ,designation ,existingDataforUser, contactDetails ,taxDetails , bankDetails , pincode}
+
+const finalSubmit = async(req,res)=>{
+try {
+      const {userid} = req.body
+
+      const isValid = await  LocationsbyUserid(userid)
+      if(isValid.recordset.length == 0 ){
+        return res.status(400).json({
+          message:`No Locations are Created by this Userid`
+        })
+      }
+      
+      //Getting Email of the user to send the pdf in mail
+      const email = await emailbyuserID(userid)
+  
+      //Getting IP
+      const ip = req.headers['x-forwarded-for'] || req.socket.remoteAddress;
+  
+      // Generate PDF and get file path
+      const pdfPath = await jsontoPDF(userid,ip); 
+      
+      // Sending Mail
+      const mailOptions = finalSubmissionMail(email, pdfPath);
+      transporter.sendMail(mailOptions, (error, info) => {
+      if (error) {
+        console.error('Error sending email:', error);
+        return res.status(500).json({ Error: 'Failed to send mail' });
+      }
+      else{
+        fs.unlinkSync(pdfPath)
+      }
+    });
+      res.status(200).send(`Mail Sent Successfully`)
+
+} catch (error) {
+  res.status(500).json({
+    Error:error.message
+  })
+}
+}
+
+const LocationbyUserid = async(req,res)=>{
+try {
+    const {userId} = req.body
+    const data = await LocationsbyUserid(userId)
+
+    res.status(200).json({
+      Data:data.recordset
+    })
+  
+} catch (error) {
+  res.status(500).json({
+    Error:error.message
+  })
+}
+}
+export {LocationbyUserid,locationInActive,pdfmailer,IFSCBAnkMapping,citybyPincode,createDealer,createLocation ,designation ,existingDataforUser, contactDetails ,taxDetails , bankDetails , pincode , finalSubmit}

@@ -1,5 +1,5 @@
 import { findUserService , createUserService, userinfoService, dealerIdbyuserId } from "../services/userservices.js";
-import { transporter, generateMailOptions } from "../services/mailservice.js"; // adjusted import
+import { transporter, generateMailOptions } from "../services/mailservice.js"; 
 import bcrypt from "bcryptjs";
 import { getPool1 } from "../db/db.js";
 import  validator  from "validator";

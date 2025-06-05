@@ -365,7 +365,7 @@ try {
 	  left join z_scope..PinCodeMaster pm  on ld.PincodeID = pm.PinCodeCode
 	  left join z_scope..CityMaster cm on ld.CityID = cm.CityCode
 	  left join z_scope..StateMaster sm on ld.StateID = sm.StateCode
-    where d.Addedby = ${userid} and ld.status = 1
+    where d.Addedby = ${userid} --and ld.status = 1
     `
   const result = await pool.request().query(query)
   return result.recordset
@@ -652,7 +652,7 @@ const jsontoPDF = async (userid,ip) => {
     pdfDoc.pipe(fs.createWriteStream(pdfPath));
     pdfDoc.end();
 
-    console.log(`✅ PDF created at: ${pdfPath}`);
+    // console.log(`✅ PDF created at: ${pdfPath}`);
     return pdfPath;
     
   } catch (error) {
@@ -695,4 +695,19 @@ try {
 }
 }
 
-export {locationInActiveService,IFSCBAnkMappingService,fetchContactDetailsService,jsontoPDF,existingUserDataService,pincodemasterService,pincodeService,createDealerService,createLocationService,designationService,contactDetailsbyLocationService,taxdetailsService,bankdetailsService}
+const LocationsbyUserid = async (userId) => {
+try {
+    const pool = await getPool1();
+    const result = await pool.request()
+      .input('UserID', sql.Int, userId)
+      .query(`
+        SELECT LocationID , Location FROM SCS_ONB_LocationDetails 
+        WHERE  AddedBy = @UserID
+      `);
+    return result;
+} catch (error) {
+  throw new Error(`LocationsbyUserid failed: ${error.message}`);
+  
+}
+};
+export {LocationsbyUserid,locationInActiveService,IFSCBAnkMappingService,fetchContactDetailsService,jsontoPDF,existingUserDataService,pincodemasterService,pincodeService,createDealerService,createLocationService,designationService,contactDetailsbyLocationService,taxdetailsService,bankdetailsService}
