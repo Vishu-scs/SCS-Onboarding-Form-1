@@ -42,4 +42,15 @@ try {
 }
 }
 
-export {findUserService , createUserService , userinfoService}
+const dealerIdbyuserId = async(userId)=>{
+try {
+    const pool = await getPool1()
+    const query = `select * from SCS_ONB_Dealer where  addedby = ${userId}`
+    const result = await pool.request().query(query)
+    return result.recordset[0].Dealerid
+} catch (error) {
+  
+}
+}
+
+export {findUserService , createUserService , userinfoService , dealerIdbyuserId}

@@ -1,4 +1,4 @@
-import { findUserService , createUserService, userinfoService } from "../services/userservices.js";
+import { findUserService , createUserService, userinfoService, dealerIdbyuserId } from "../services/userservices.js";
 import { transporter, generateMailOptions } from "../services/mailservice.js"; // adjusted import
 import bcrypt from "bcryptjs";
 import { getPool1 } from "../db/db.js";
@@ -169,63 +169,12 @@ const login = async (req, res) => {
     const mailOptions = generateMailOptions(email, OTP);
     await transporter.sendMail(mailOptions); // ✅ properly awaited
 
-    // Fetch and structure onboarding data
-    // const rawData = await existingLoginData(existingUserId);
-    // const grouped = {};
-
-    // rawData.forEach(row => {
-    //   const locId = row.LocationID;
-
-    //   if (!grouped[locId]) {
-    //     grouped[locId] = {
-    //       LocationID: row.LocationID,
-    //       Brandid: row.Brandid,
-    //       Dealerid: row.Dealerid,
-    //       Dealer: row.Dealer,
-    //       OEMCode: row.OEMCode,
-    //       Location: row.Location,
-    //       Address: row.Address,
-    //       Landmark: row.Landmark,
-    //       PincodeID: row.PincodeID,
-    //       CityID: row.CityID,
-    //       StateID: row.StateID,
-    //       Latitude: row.Latitude,
-    //       Longitude: row.Longitude,
-    //       Contacts: [],
-    //       TaxDetails: {
-    //         TAN: row.TAN,
-    //         PAN: row.PAN,
-    //         GST: row.GST,
-    //         GSTCertificate: row.GSTCertificate
-    //       },
-    //       BankDetails: {
-    //         AccountHolderName: row.AccountHolderName,
-    //         AccountNumber: row.AccountNumber,
-    //         BankName: row.BankName,
-    //         BranchName: row.BranchName,
-    //         IFSCCode: row.IFSCCode,
-    //         CheckImg: row.CheckImg
-    //       }
-    //     };
-    //   }
-
-    //   if (row.Name || row.Email) {
-    //     grouped[locId].Contacts.push({
-    //       DesignationID: row.DesignationID,
-    //       Name: row.Name,
-    //       MobileNo: row.MobileNo,
-    //       Email: row.Email
-    //     });
-    //   }
-    // });
-
-    // const finalResult = Object.values(grouped);
-
+    const dealerID = await dealerIdbyuserId(existingUserId)
     return res.status(200).json({
       message: "User LoggedIn successfully",
       otp: hashedOTP,
       userId: existingUserId,
-      // data: finalResult
+      dealerId:dealerID
     });
 
   } catch (error) {
