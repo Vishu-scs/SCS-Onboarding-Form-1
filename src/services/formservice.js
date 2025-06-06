@@ -315,7 +315,6 @@ const bankdetailsService = async(locationId,accholdername , accno , bankname ,br
 
 try {
     const pool = await getPool1()
-        // ✅ Step 1: Check if entry already exists for this LocationID
     const checkQuery = `
       SELECT 1 FROM SCS_ONB_BankDetails WHERE LocationID = @LocationID
     `;

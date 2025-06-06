@@ -3,6 +3,7 @@ import { transporter, generateMailOptions } from "../services/mailservice.js";
 import bcrypt from "bcryptjs";
 import { getPool1 } from "../db/db.js";
 import  validator  from "validator";
+import { isMailSent } from "../utils/formserviceChecks.js";
 
 
 const createUser = async (req, res) => {
@@ -163,24 +164,32 @@ const login = async (req, res) => {
       return res.status(400).json({ message: "Email Not Registered" });
     }
 
-    const OTP = Math.floor(100000 + Math.random() * 900000);
-    const hashedOTP = await bcrypt.hash(OTP.toString(), 10);
+      const isFinalMailSent = await isMailSent(existingUserId)
+      if(isFinalMailSent == 1){
+        return res.status(400).json({
+          message:`Hello, You have Already got the Final Mail from Us.`
+        })
+      }
+        else{
 
-    const mailOptions = generateMailOptions(email, OTP);
-    await transporter.sendMail(mailOptions); // ✅ properly awaited
-
-    const dealerID = await dealerIdbyuserId(existingUserId)
-    return res.status(200).json({
-      message: "User LoggedIn successfully",
-      otp: hashedOTP,
-      userId: existingUserId,
-      dealerId:dealerID
-    });
-
-  } catch (error) {
-    console.error("Login error:", error);
-    return res.status(500).json({ error: error.message });
-  }
+        const OTP = Math.floor(100000 + Math.random() * 900000);
+        const hashedOTP = await bcrypt.hash(OTP.toString(), 10);
+        
+        const mailOptions = generateMailOptions(email, OTP);
+        await transporter.sendMail(mailOptions); // ✅ properly awaited
+        
+        const dealerID = await dealerIdbyuserId(existingUserId)
+        return res.status(200).json({
+          message: "User LoggedIn successfully",
+          otp: hashedOTP,
+          userId: existingUserId,
+          dealerId:dealerID
+        });
+      }
+      } catch (error) {
+        console.error("Login error:", error);
+        return res.status(500).json({ error: error.message });
+      }
 };
 
 // const userInfo = async(req,res)=>{

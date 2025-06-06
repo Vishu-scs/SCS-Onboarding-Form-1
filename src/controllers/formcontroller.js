@@ -1,10 +1,11 @@
 import { createDealerService , createLocationService, designationService, pincodemasterService, pincodeService, taxdetailsService , bankdetailsService, contactDetailsbyLocationService, fetchContactDetailsService, IFSCBAnkMappingService, existingUserDataService, jsontoPDF, locationInActiveService, LocationsbyUserid} from "../services/formservice.js";
 import fs from 'fs'
 import path from 'path'
+import sql from 'mssql'
 import { uploadToS3 } from "../middlewares/multer.middleware.js";
 import { getPool1 } from "../db/db.js";
 import { transformDealerData } from "../utils/jsondataformatter.js";
-import { checkLocationOwnership, emailbyuserID } from "../utils/formserviceChecks.js";
+import { checkLocationOwnership, emailbyuserID, updateMailforUser } from "../utils/formserviceChecks.js";
 import { finalSubmissionMail } from "../services/mailservice.js";
 import { transporter, generateMailOptions } from "../services/mailservice.js"; 
 
@@ -467,45 +468,97 @@ try {
 
 }
 
-const finalSubmit = async(req,res)=>{
-try {
-      const {userid} = req.body
+// Without Transaction Block
+// const finalSubmit = async(req,res)=>{
+// try {
+//       const {userid} = req.body
 
-      const isValid = await  LocationsbyUserid(userid)
-      if(isValid.recordset.length == 0 ){
-        return res.status(400).json({
-          message:`No Locations are Created by this Userid`
-        })
-      }
+//       const isValid = await  LocationsbyUserid(userid)
+//       if(isValid.recordset.length == 0 ){
+//         return res.status(400).json({
+//           message:`No Locations are Created by this Userid`
+//         })
+//       }
       
-      //Getting Email of the user to send the pdf in mail
-      const email = await emailbyuserID(userid)
+//       //Getting Email of the user to send the pdf in mail
+//       const email = await emailbyuserID(userid)
   
-      //Getting IP
-      const ip = req.headers['x-forwarded-for'] || req.socket.remoteAddress;
+//       //Getting IP
+//       const ip = req.headers['x-forwarded-for'] || req.socket.remoteAddress;
   
-      // Generate PDF and get file path
-      const pdfPath = await jsontoPDF(userid,ip); 
+//       // Generate PDF and get file path
+//       const pdfPath = await jsontoPDF(userid,ip); 
       
-      // Sending Mail
-      const mailOptions = finalSubmissionMail(email, pdfPath);
-      transporter.sendMail(mailOptions, (error, info) => {
+//       // Sending Mail
+//       const mailOptions = finalSubmissionMail(email, pdfPath);
+//       transporter.sendMail(mailOptions, async (error, info) => {
+//   if (!error) {
+//     fs.unlinkSync(pdfPath);
+//     await updateMailforUser(userid);
+//   } else {
+//     console.error("Mail failed:", error.message);
+//   }
+// });
+//       res.status(200).send(`Mail Sent Successfully`)
+
+// } catch (error) {
+//   res.status(500).json({
+//     Error:error.message
+//   })
+// }
+// }
+
+const finalSubmit = async (req, res) => {
+  let transaction;
+  try {
+    const { userid } = req.body;
+    const pool = await getPool1();
+    transaction = new sql.Transaction(pool);
+    await transaction.begin();
+
+    const isValid = await LocationsbyUserid(userid);
+    if (isValid.recordset.length === 0) {
+      await transaction.rollback();
+      return res.status(400).json({
+        message: `No Locations are Created by this Userid`,
+      });
+    }
+
+    const email = await emailbyuserID(userid);
+    const ip = req.headers["x-forwarded-for"] || req.socket.remoteAddress;
+    const pdfPath = await jsontoPDF(userid, ip);
+    const mailOptions = finalSubmissionMail(email, pdfPath);
+
+    // Send mail and update DB inside callback
+    transporter.sendMail(mailOptions, async (error, info) => {
       if (error) {
-        console.error('Error sending email:', error);
-        return res.status(500).json({ Error: 'Failed to send mail' });
+        // console.error("Mail failed:", error.message);
+        await transaction.rollback();
+        return;
       }
-      else{
-        fs.unlinkSync(pdfPath)
+
+      try {
+        fs.unlinkSync(pdfPath);
+        await updateMailforUser(userid, transaction); // use transaction
+        await transaction.commit();
+        // console.log("Mail sent and transaction committed");
+      } catch (err) {
+        // console.error("Post-mail logic failed:", err.message);
+        await transaction.rollback();
       }
     });
-      res.status(200).send(`Mail Sent Successfully`)
 
-} catch (error) {
-  res.status(500).json({
-    Error:error.message
-  })
-}
-}
+    // Respond immediately — background work continues
+    res.status(200).send(`Mail Sent Successfully`);
+
+  } catch (error) {
+    if (transaction) await transaction.rollback();
+    res.status(500).json({ Error: error.message });
+  }
+};
+
+
+
 
 const LocationbyUserid = async(req,res)=>{
 try {
@@ -522,4 +575,5 @@ try {
   })
 }
 }
+
 export {LocationbyUserid,locationInActive,pdfmailer,IFSCBAnkMapping,citybyPincode,createDealer,createLocation ,designation ,existingDataforUser, contactDetails ,taxDetails , bankDetails , pincode , finalSubmit}

@@ -26,7 +26,7 @@ const generateMailOptions = (useremail, OTP) => ({
 const finalSubmissionMail = (useremail , pdfPath) =>({
   from : process.env.EMAILID,
   to: useremail,
-  cc: 'scope@sparecare.in,manish.sharma@sparecare.in',
+  cc: 'ayush.sharma@sparecare.in',
   subject : `Onboarding With SpareCare`,
   html : `
   <p>Hi Team,</p>

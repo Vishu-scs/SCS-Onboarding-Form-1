@@ -13,7 +13,7 @@ router.route('/create-dealer').post(createDealer)
 router.route('/create-location').post(createLocation)
 router.route('/contact').post(contactDetails)
 router.route('/existed-data').post(existingDataforUser)
-router.route('/pdf-mail').post(pdfmailer)
+// router.route('/pdf-mail').post(pdfmailer)      //Not using 
 router.route('/submit').post(finalSubmit)
 router.route('/all-loc').post(LocationbyUserid)
 router.route('/loc-inactive').post(locationInActive)
