@@ -549,7 +549,7 @@ const finalSubmit = async (req, res) => {
     });
 
     // Respond immediately — background work continues
-    res.status(200).send(`Mail Sent Successfully`);
+    res.status(200).json({message:`Mail Sent Successfully`});
 
   } catch (error) {
     if (transaction) await transaction.rollback();
