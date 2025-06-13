@@ -133,12 +133,20 @@ const createLocationService = async (
     } catch (error) {
         throw new Error(`associatedLocationsQuery failed: Error in Fetching Associated Locations \n ${error.message}`);
     }
-    
-    return {
+    // console.log(associatedLocations);
+    // console.log(associatedLocations.recordset);
+    // const location = insertResult.recordset[0].LocationID
+
+    if(associatedLocations.recordset.length != 0){
+        
+      const autoAssignOwner = await assignOwnerforExistingLocation(insertResult.recordset[0].LocationID,userid)
+      // console.log(autoAssignOwner);
+      
+    }
+        return {
       created: true,
       Locations : associatedLocations.recordset
-      // LocationID: insertResult.recordset[0].LocationID,
-      // Location: insertResult.recordset[0].Location
+
     };
 
   } catch (error) {
@@ -709,4 +717,41 @@ try {
   
 }
 };
+
+
+const assignOwnerforExistingLocation = async(locationid , userid)=> {
+try {
+  const pool = await getPool1()
+  const ownerDetailsforExistingLocationQuery  = 
+          ` use [z_scope]
+        ;with data as (
+        select LocationID , Location from SCS_onb_locationdetails where dealerid = (select dealerid from SCS_onb_locationdetails where locationid =  ${locationid}  )and Addedby = ${userid})
+        select top 1  cd.LocationID , DesignationID , Name , MobileNo , Email , Addedby from SCS_ONB_ContactDetails cd
+        join data d on d.locationid = cd.locationid 
+        where cd.designationid = 1 
+        order by cd.locationid
+          ` 
+  
+        const result = await pool.request().query(ownerDetailsforExistingLocationQuery)
+        // console.log(result.recordset[0]);
+  
+        const insertQuery = ` use [z_scope]
+        insert into SCS_ONB_ContactDetails(LocationID,DesignationID,Name,MobileNo,Email,Addedby)
+        values(@locationid,@DesignationID,@Name,@MobileNo,@Email,@Addedby)
+        `
+        const val  = await pool.request()
+        .input('locationid',locationid)
+        .input('DesignationID',result.recordset[0].DesignationID)
+        .input('Name',result.recordset[0].Name)
+        .input('MobileNo',result.recordset[0].MobileNo)
+        .input('Email',result.recordset[0].Email)
+        .input('Addedby',result.recordset[0].Addedby)
+        .query(insertQuery) 
+
+    return 1;
+  
+} catch (error) {
+  throw new Error(`assignOwnerforExistingLocation failed: ${error.message}`); 
+}
+}
 export {LocationsbyUserid,locationInActiveService,IFSCBAnkMappingService,fetchContactDetailsService,jsontoPDF,existingUserDataService,pincodemasterService,pincodeService,createDealerService,createLocationService,designationService,contactDetailsbyLocationService,taxdetailsService,bankdetailsService}
