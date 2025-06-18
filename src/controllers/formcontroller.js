@@ -108,7 +108,7 @@ const createLocation = async (req, res) => {
       stateid, latitude, longitude, sims, gainer, audit, userid
     } = req.body;
 
-    // Validate required fields (add/remove as per your business rules)
+    // Validate required fields 
     if (!dealerid || !location || !address || !pincodeid || !cityid || !stateid || !userid || !latitude || !longitude) {
       return res.status(400).json({
         message: "dealerid, location, address, pincodeid, cityid, stateid, latitude, longitude and userid are required"

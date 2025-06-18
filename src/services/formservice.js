@@ -75,35 +75,130 @@ const createDealerService = async (brandid, dealer, userid, oemcode) => {
     }
 };
 
+// const createLocationService = async (
+//   dealerid, location, address, landmark, pincodeid, cityid, stateid,
+//   latitude, longitude, sims, gainer, audit, userid
+// ) => {
+//   try {
+//     const pool = await getPool1();
+     
+//     // Check if location already exists for this dealer and user
+//     const existingLocationQuery = `
+//       SELECT LocationID FROM SCS_ONB_LocationDetails
+//       WHERE DealerID = @dealerid AND Addedby = @userid AND Location = @location
+//     `;
+//     const existingLocationResult = await pool.request()
+//       .input('dealerid', dealerid)
+//       .input('userid', userid)
+//       .input('location', location)
+//       .query(existingLocationQuery);
+
+//     if (existingLocationResult.recordset.length > 0) {
+//       return {
+//         alreadyExists: true,
+//         locationId: existingLocationResult.recordset[0].LocationID
+//       };
+//     }
+
+//     const pincodeResult = await pool.request().query(`select PinCodeCode from PinCodeMaster where PinCodeName = ${pincodeid}`)
+//     const pincode = pincodeResult.recordset[0].PinCodeCode
+//     // Insert new location if not exists
+//     const insertResult = await pool.request()
+//       .input('Dealerid', dealerid)
+//       .input('Location', location)
+//       .input('Address', address)
+//       .input('Landmark', landmark)
+//       .input('PincodeID', pincode)
+//       .input('CityID', cityid)
+//       .input('StateID', stateid)
+//       .input('Latitude', latitude)
+//       .input('Longitude', longitude)
+//       .input('SIMS', sims)
+//       .input('Gainer', gainer)
+//       .input('Audit', audit)
+//       .input('Addedby', userid)
+//       .query(`
+//         INSERT INTO SCS_ONB_LocationDetails
+//           (Dealerid, Location, Address, Landmark, PincodeID, CityID, StateID,
+//            Latitude, Longitude, SIMS, Gainer, Audit, Addedby)
+//         OUTPUT INSERTED.LocationID, INSERTED.Location
+//         VALUES
+//           (@Dealerid, @Location, @Address, @Landmark, @PincodeID, @CityID, @StateID,
+//            @Latitude, @Longitude, @SIMS, @Gainer, @Audit, @Addedby)
+//       `);
+//        let associatedLocations;
+//     try {
+//         const associatedLocationsQuery = `select LocationID , Location from SCS_onb_locationdetails where dealerid = (select dealerid from SCS_onb_locationdetails where locationid = ${insertResult.recordset[0].LocationID}  )and Addedby = ${userid}`
+//          associatedLocations =  await pool.request().query(associatedLocationsQuery)
+//     } catch (error) {
+//         throw new Error(`associatedLocationsQuery failed: Error in Fetching Associated Locations \n ${error.message}`);
+//     }
+//     // console.log(associatedLocations);
+//     // console.log(associatedLocations.recordset);
+//     // const location = insertResult.recordset[0].LocationID
+
+//     if(associatedLocations.recordset.length != 0){
+        
+//       const autoAssignOwner = await assignOwnerforExistingLocation(insertResult.recordset[0].LocationID,userid)
+//       console.log(autoAssignOwner);
+      
+//     }
+//         return {
+//       created: true,
+//       Locations : associatedLocations.recordset
+
+//     };
+
+//   } catch (error) {
+//     throw new Error(`createLocationService failed: ${error.message}`);
+//   }
+// };
+
 const createLocationService = async (
   dealerid, location, address, landmark, pincodeid, cityid, stateid,
   latitude, longitude, sims, gainer, audit, userid
 ) => {
+  const pool = await getPool1();
+  const transaction = new sql.Transaction(pool);
+
   try {
-    const pool = await getPool1();
-     
+    await transaction.begin();
+    const request = new sql.Request(transaction);
+
     // Check if location already exists for this dealer and user
     const existingLocationQuery = `
       SELECT LocationID FROM SCS_ONB_LocationDetails
       WHERE DealerID = @dealerid AND Addedby = @userid AND Location = @location
     `;
-    const existingLocationResult = await pool.request()
+    const existingLocationResult = await request
       .input('dealerid', dealerid)
       .input('userid', userid)
       .input('location', location)
       .query(existingLocationQuery);
 
+// console.log(`existingLocationResult`,existingLocationResult);
+
     if (existingLocationResult.recordset.length > 0) {
+      await transaction.rollback();
       return {
         alreadyExists: true,
         locationId: existingLocationResult.recordset[0].LocationID
       };
     }
 
-    const pincodeResult = await pool.request().query(`select PinCodeCode from PinCodeMaster where PinCodeName = ${pincodeid}`)
-    const pincode = pincodeResult.recordset[0].PinCodeCode
-    // Insert new location if not exists
-    const insertResult = await pool.request()
+    // Get PincodeCode from PincodeMaster
+    const pincodeQuery = `SELECT PinCodeCode FROM PinCodeMaster WHERE PinCodeName = @pincodeid`;
+    const pincodeResult = await request.input('pincodeid', pincodeid).query(pincodeQuery);
+    const pincode = pincodeResult.recordset[0]?.PinCodeCode;
+
+    if (!pincode) {
+      await transaction.rollback();
+      throw new Error(`Invalid pincode ID: ${pincodeid}`);
+    }
+
+    // Insert new location
+    const insertRequest = new sql.Request(transaction);
+    const insertResult = await insertRequest
       .input('Dealerid', dealerid)
       .input('Location', location)
       .input('Address', address)
@@ -126,30 +221,56 @@ const createLocationService = async (
           (@Dealerid, @Location, @Address, @Landmark, @PincodeID, @CityID, @StateID,
            @Latitude, @Longitude, @SIMS, @Gainer, @Audit, @Addedby)
       `);
-       let associatedLocations;
-    try {
-        const associatedLocationsQuery = `select LocationID , Location from SCS_onb_locationdetails where dealerid = (select dealerid from SCS_onb_locationdetails where locationid = ${insertResult.recordset[0].LocationID}  )and Addedby = ${userid}`
-         associatedLocations =  await pool.request().query(associatedLocationsQuery)
-    } catch (error) {
-        throw new Error(`associatedLocationsQuery failed: Error in Fetching Associated Locations \n ${error.message}`);
-    }
-    // console.log(associatedLocations);
-    // console.log(associatedLocations.recordset);
-    // const location = insertResult.recordset[0].LocationID
 
-    if(associatedLocations.recordset.length != 0){
-        
-      const autoAssignOwner = await assignOwnerforExistingLocation(insertResult.recordset[0].LocationID,userid)
-      // console.log(autoAssignOwner);
-      
+    const newLocationId = insertResult.recordset[0].LocationID;
+
+    // Fetch associated locations
+    // const associatedLocationsQuery = `
+    //   SELECT LocationID, Location 
+    //   FROM SCS_ONB_LocationDetails 
+    //   WHERE DealerID = (
+    //     SELECT DealerID 
+    //     FROM SCS_ONB_LocationDetails 
+    //     WHERE LocationID = @newLocationId
+    //   )
+    //   AND Addedby = @userid
+    // `;
+    // const associatedLocationsResult = await request
+    //   .input('newLocationId', newLocationId)
+    //   .input('userid', userid)
+    //   .query(associatedLocationsQuery);
+    // Fetch associated locations
+const associatedRequest = new sql.Request(transaction);
+const associatedLocationsQuery = `
+  SELECT LocationID, Location 
+  FROM SCS_ONB_LocationDetails 
+  WHERE DealerID = (
+    SELECT DealerID 
+    FROM SCS_ONB_LocationDetails 
+    WHERE LocationID = @newLocationId
+  )
+  AND Addedby = @userid
+`;
+const associatedLocationsResult = await associatedRequest
+  .input('newLocationId', newLocationId)
+  .input('userid', userid)
+  .query(associatedLocationsQuery);
+
+
+    // Auto-assign owner
+    if (associatedLocationsResult.recordset.length > 0) {
+      await assignOwnerforExistingLocation(newLocationId, userid , transaction);
     }
-        return {
+
+    await transaction.commit();
+
+    return {
       created: true,
-      Locations : associatedLocations.recordset
-
+      Locations: associatedLocationsResult.recordset
     };
 
   } catch (error) {
+    if (transaction._aborted !== true) await transaction.rollback();
     throw new Error(`createLocationService failed: ${error.message}`);
   }
 };
@@ -719,39 +840,94 @@ try {
 };
 
 
-const assignOwnerforExistingLocation = async(locationid , userid)=> {
-try {
-  const pool = await getPool1()
-  const ownerDetailsforExistingLocationQuery  = 
-          ` use [z_scope]
-        ;with data as (
-        select LocationID , Location from SCS_onb_locationdetails where dealerid = (select dealerid from SCS_onb_locationdetails where locationid =  ${locationid}  )and Addedby = ${userid})
-        select top 1  cd.LocationID , DesignationID , Name , MobileNo , Email , Addedby from SCS_ONB_ContactDetails cd
-        join data d on d.locationid = cd.locationid 
-        where cd.designationid = 1 
-        order by cd.locationid
-          ` 
+// const assignOwnerforExistingLocation = async(locationid , userid)=> {
+// try {
+//   const pool = await getPool1()
+//   const ownerDetailsforExistingLocationQuery  = 
+//           ` use [z_scope]
+//         ;with data as (
+//         select LocationID , Location from SCS_onb_locationdetails where dealerid = (select dealerid from SCS_onb_locationdetails where locationid =  ${locationid}  )and Addedby = ${userid})
+//         select top 1  cd.LocationID , DesignationID , Name , MobileNo , Email , Addedby from SCS_ONB_ContactDetails cd
+//         join data d on d.locationid = cd.locationid 
+//         where cd.designationid = 1 
+//         order by cd.locationid
+//           ` 
+//   console.log(ownerDetailsforExistingLocationQuery);
   
-        const result = await pool.request().query(ownerDetailsforExistingLocationQuery)
-        // console.log(result.recordset[0]);
+//         const result = await pool.request().query(ownerDetailsforExistingLocationQuery)
+//         console.log(result.recordset[0]);
   
-        const insertQuery = ` use [z_scope]
-        insert into SCS_ONB_ContactDetails(LocationID,DesignationID,Name,MobileNo,Email,Addedby)
-        values(@locationid,@DesignationID,@Name,@MobileNo,@Email,@Addedby)
-        `
-        const val  = await pool.request()
-        .input('locationid',locationid)
-        .input('DesignationID',result.recordset[0].DesignationID)
-        .input('Name',result.recordset[0].Name)
-        .input('MobileNo',result.recordset[0].MobileNo)
-        .input('Email',result.recordset[0].Email)
-        .input('Addedby',result.recordset[0].Addedby)
-        .query(insertQuery) 
+//         const insertQuery = ` use [z_scope]
+//         insert into SCS_ONB_ContactDetails(LocationID,DesignationID,Name,MobileNo,Email,Addedby)
+//         values(@locationid,@DesignationID,@Name,@MobileNo,@Email,@Addedby)
+//         `
+//         const val  = await pool.request()
+//         .input('locationid',locationid)
+//         .input('DesignationID',result.recordset[0].DesignationID)
+//         .input('Name',result.recordset[0].Name)
+//         .input('MobileNo',result.recordset[0].MobileNo)
+//         .input('Email',result.recordset[0].Email)
+//         .input('Addedby',result.recordset[0].Addedby)
+//         .query(insertQuery) 
+//   console.log(123);
+  
+//     return 1;
+  
+// } catch (error) {
+//   throw new Error(`assignOwnerforExistingLocation failed: ${error.message}`); 
+// }
+// }
+const assignOwnerforExistingLocation = async (locationid, userid, transaction) => {
+  try {
+    const request = new sql.Request(transaction);
+
+    const ownerDetailsQuery = `
+      WITH data AS (
+        SELECT LocationID, Location 
+        FROM SCS_ONB_LocationDetails 
+        WHERE DealerID = (
+          SELECT DealerID 
+          FROM SCS_ONB_LocationDetails 
+          WHERE LocationID = @locationid
+        ) 
+        AND Addedby = @userid
+      )
+      SELECT TOP 1 
+        cd.LocationID, DesignationID, Name, MobileNo, Email, Addedby 
+      FROM SCS_ONB_ContactDetails cd
+      JOIN data d ON d.LocationID = cd.LocationID 
+      WHERE cd.DesignationID = 1 
+      ORDER BY cd.LocationID
+    `;
+
+    const result = await request
+      .input('locationid', locationid)
+      .input('userid', userid)
+      .query(ownerDetailsQuery);
+
+    if (!result.recordset.length) return 0;
+
+    const row = result.recordset[0];
+
+    const insertQuery = `
+      INSERT INTO SCS_ONB_ContactDetails (LocationID, DesignationID, Name, MobileNo, Email, Addedby)
+      VALUES (@locationid, @DesignationID, @Name, @MobileNo, @Email, @Addedby)
+    `;
+
+    await request
+      .input('locationid', locationid)
+      .input('DesignationID', row.DesignationID)
+      .input('Name', row.Name)
+      .input('MobileNo', row.MobileNo)
+      .input('Email', row.Email)
+      .input('Addedby', row.Addedby)
+      .query(insertQuery);
 
     return 1;
-  
-} catch (error) {
-  throw new Error(`assignOwnerforExistingLocation failed: ${error.message}`); 
-}
-}
+
+  } catch (error) {
+    throw new Error(`assignOwnerforExistingLocation failed: ${error.message}`);
+  }
+};
+
 export {LocationsbyUserid,locationInActiveService,IFSCBAnkMappingService,fetchContactDetailsService,jsontoPDF,existingUserDataService,pincodemasterService,pincodeService,createDealerService,createLocationService,designationService,contactDetailsbyLocationService,taxdetailsService,bankdetailsService}
